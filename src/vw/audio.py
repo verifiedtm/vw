@@ -10,6 +10,7 @@ from statistics import median, pstdev
 from PIL import Image, ImageDraw
 
 from .ffmpeg import digest
+from .markers import marker_seconds, named_markers
 from .project import (
     MARKER_FIELDS,
     Project,
@@ -73,24 +74,6 @@ def envelope(path):
     if not rms:
         raise WorkbenchError(f"No audio samples in {path}")
     return rms, peaks
-
-
-def marker_seconds(row: dict, project: Project) -> Fraction:
-    """Read one unambiguous marker without quantizing an output-frame index."""
-    if row.get("at_frame") not in (None, "") and row.get("time_ms") not in (None, ""):
-        raise WorkbenchError("markers.csv: cannot mix time_ms and at_frame")
-    try:
-        if row.get("at_frame") not in (None, ""):
-            value = int(row["at_frame"])
-            result = Fraction(value, 1) / project.fps
-        else:
-            value = int(row.get("time_ms", ""))
-            result = Fraction(value, 1000)
-        if value < 0:
-            raise ValueError("negative timestamp")
-        return result
-    except ValueError as exc:
-        raise WorkbenchError(f"Invalid marker {row}: {exc}") from exc
 
 
 def analyze(project: Project, audio: str | None = None) -> dict:
@@ -225,6 +208,7 @@ def add_marker(
     label: str,
     *,
     at_frame: int | None = None,
+    id: str = "",
 ) -> dict:
     if (time_ms is None) == (at_frame is None):
         raise WorkbenchError("Specify exactly one of time_ms or at_frame")
@@ -239,8 +223,10 @@ def add_marker(
         "kind": kind,
         "label": label,
         "origin": "manual",
+        "id": id,
     }
     rows.append(row)
+    named_markers(project, rows)
     rows.sort(key=lambda r: marker_seconds(r, project))
     write_csv(path, fields, rows)
     return row

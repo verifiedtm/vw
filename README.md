@@ -165,9 +165,9 @@ frame CSV preserves its indices without any millisecond conversion.
 | --- | --- |
 | asset | ID in assets.csv |
 | src_in, src_out | source trim bounds; for images, the interval controls duration |
-| at | output start in milliseconds; nonnegative |
+| at | nonnegative output start in milliseconds, or a marker reference |
 | src_in_frame, src_out_frame | decoded source-frame range (project frames for stills) |
-| at_frame | nonnegative output start frame |
+| at_frame | nonnegative output start frame, or a marker reference |
 | nframes | optional positive exact output frame count for a frame row |
 | layer | integer compositing order, default 0; higher layers are on top |
 | fit | contain (default), cover, or stretch |
@@ -378,13 +378,76 @@ experiment, then use the usual preview and final render commands.
 
 ### markers.csv and analysis
 
-Columns: `time_ms,at_frame,kind,label,origin`. Each row uses either integer
+Columns: `time_ms,at_frame,kind,label,origin,id`. Each row uses either integer
 `time_ms` or integer output `at_frame`; populating both is rejected. Legacy marker
 files remain supported. Use `vw marker 842 "Dancer entrance" --frames` to store
 a frame position directly, with no millisecond conversion. Waveform drawing and
 sorting use exact rational positions at project FPS. `vw marker` adds a row with `origin=manual`
 and preserves other rows and annotation columns. Kinds can describe beats, lyrics,
 drops, transitions, or any editor-defined event.
+
+The optional `id` names a marker independently of its label. IDs are case-sensitive,
+unique across `markers.csv`, and match `[A-Za-z_][A-Za-z0-9_]*`. Existing files
+without IDs and unnamed rows remain accepted; labels need not be unique. Use
+`vw marker 1000 "Entrance" --id entrance` to create a referenceable marker.
+Renaming a label leaves references intact; keep its ID stable.
+
+Timeline `at` and `at_frame` accept `marker:entrance`, `marker:entrance-100ms`,
+or `marker:entrance+3f`. An optional signed integer offset uses `ms` for
+milliseconds or `f` for **project output frames**, regardless of the referencing
+column. References do not change a row's source timing schema: use `at` with
+millisecond trims and `at_frame` with frame trims. Only starts can reference
+markers; source trims, lengths, and transitions keep their existing formats.
+
+Keyframe `time` values use the same syntax with `time_base = "timeline"`, in both
+layer and mask animation files. A reference always denotes an absolute timeline
+position, independent of `time_unit`; integer key times still follow that unit.
+Offsets are added to the marker's exact rational position **before** a single
+nearest-even rounding to output frames, then the rounded segment start is
+subtracted for local keyframes. This also preserves frame-authored markers at
+fractional FPS such as `30000/1001`. Negative resolved times, unknown IDs,
+malformed offsets, keys outside their segment, and keys that collide on one
+output frame are errors.
+
+For example, at 30 FPS these two segments start at frames 27 and 33, and the
+second segment changes opacity at timeline frame 36 (local frame 3):
+
+In `markers.csv`:
+
+```csv
+time_ms,kind,label,origin,id
+1000,cut,Entrance,manual,entrance
+```
+
+```csv
+asset,src_in,src_out,at,layer,animation
+clip-001,0,1000,marker:entrance-100ms,0,
+clip-002,0,1000,marker:entrance+3f,1,animations/entrance.json
+```
+
+Save `animations/entrance.json` as:
+
+```json
+{
+  "time_base": "timeline",
+  "properties": {
+    "opacity": [
+      {"time": "marker:entrance+3f", "value": 0, "interpolation": "hold"},
+      {"time": "marker:entrance+200ms", "value": 1}
+    ]
+  }
+}
+```
+
+Python timeline and rendering callers resolve the same files automatically.
+For direct `Animation.from_dict(...)` calls, pass
+`markers=named_markers(project)` from `vw.markers` alongside `fps`, `at`, and
+`frames`.
+
+Changing only the marker's timestamp moves both starts and the property change.
+Only rows with `origin=manual` can resolve references. Analysis suggestion files
+are never loaded for rendering; a suggestion copied into `markers.csv` must be
+explicitly promoted to `origin=manual` and given an ID before it can be referenced.
 
 Audio analysis streams mono PCM into 20 ms RMS and peak windows. It writes a
 linear-amplitude waveform with manual marker lines, envelope JSON, and heuristic
@@ -423,7 +486,8 @@ clip-001,0,30,0,30,animations/move.json
 ```
 
 `version`, `time_base`, and `time_unit` default to `1`, `local`, and `frames`.
-Times are nonnegative integers. `local` counts **output frames since the segment
+Times are nonnegative integers or timeline marker references as described above.
+`local` counts **output frames since the segment
 starts**, independent of source trim and speed. `timeline` counts from timeline
 frame zero, then subtracts the segment's rounded start frame. With `time_unit =
 "ms"`, integer milliseconds convert once using exact project FPS and nearest-even
@@ -513,18 +577,22 @@ project geometry invalidates affected preparation. Lossless alpha intermediates
 favor inspectability and correctness over disk space; keep projects short and
 remove old cache entries manually when needed.
 
-Each export has a JSON manifest with source/config/timeline hashes, settings,
+Each export has a JSON manifest with source/config/timeline/marker hashes, resolved positions, settings,
 frame count, prepared artifact paths, and cache hit count. No timestamp or random
 seed is involved in editorial decisions. Byte-identical encoding is only expected
 with the same tools and platform; the lockfiles pin development dependencies.
 
 `timeline validate` checks source presence, trim bounds, numeric values, presets,
 transitions, duration, and soundtrack availability. It reports uncovered frame
-ranges and warnings about silence. `timeline visualize` writes a standalone SVG.
+ranges and warnings about silence. Its JSON includes `markers` (named manual
+marker IDs mapped to rounded output frames) and `positions` (each CSV row's
+`start_frame`, exclusive `end_frame`, and layer/mask animation keys with local
+`frame` and absolute `timeline_frame`). `timeline visualize` writes a standalone
+SVG with named marker lines and resolved segment/keyframe tooltips.
 
 `inspect` decodes the actual output, checks dimensions, fps, frame count, duration,
 pixel format, SDR color tags, and soundtrack presence. Render manifests supply
-expected settings for previews and finals, and changed project/timeline files
+expected settings for previews and finals, and changed project/timeline/marker files
 produce stale-render warnings. Without a manifest, it checks against current
 project dimensions (or preview dimensions with `--preview`). It also reports near
 black intervals, silence below -50 dBFS lasting at least 250 ms, and audio peaks
@@ -549,7 +617,7 @@ diagnostics = validate(project)
 manifest = render(project, preview=True)
 ```
 
-The public modules are `project`, `assets`, `audio`, `timeline`, `animation`, `geometry`, `normalize`,
+The public modules are `project`, `assets`, `audio`, `timeline`, `animation`, `markers`, `geometry`, `normalize`,
 `render`, `contact`, `inspect`, and `ffmpeg`. Errors use `WorkbenchError`.
 There is no database, daemon, web service, MoviePy dependency, or agent adapter.
 

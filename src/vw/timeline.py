@@ -9,6 +9,7 @@ from .animation import Animation, load_animation
 from .assets import IMAGE_EXTENSIONS
 from .ffmpeg import frame_boundaries, probe, stream_duration
 from .geometry import Shape, load_shapes
+from .markers import named_markers, resolve_reference
 from .presentation import display_size, placement, upscale_limit
 from .project import Project, WorkbenchError, read_csv
 
@@ -56,6 +57,7 @@ def seconds(frames: int, fps: Fraction) -> str:
 
 
 def load(project: Project) -> list[Shot]:
+    markers = named_markers(project)
     assets = project.assets()
     shapes = load_shapes(project.config)
     rows = read_csv(project.path("timeline.csv"), ["asset"])
@@ -126,8 +128,12 @@ def load(project: Project) -> list[Shot]:
                     raise ValueError(
                         "frame timing requires src_in_frame, src_out_frame, at_frame"
                     )
-                start, end, at = (
-                    int(row[k]) for k in ("src_in_frame", "src_out_frame", "at_frame")
+                start, end = (int(row[k]) for k in ("src_in_frame", "src_out_frame"))
+                value = row["at_frame"]
+                at = (
+                    resolve_reference(value, fps=project.fps, markers=markers)
+                    if value.startswith("marker:")
+                    else int(value)
                 )
                 if start < 0 or end <= start or at < 0:
                     raise ValueError(
@@ -153,14 +159,18 @@ def load(project: Project) -> list[Shot]:
             else:
                 if not all(row.get(k) for k in ("src_in", "src_out", "at")):
                     raise ValueError("millisecond timing requires src_in, src_out, at")
-                start, end, at_ms = (
-                    int(row[key]) for key in ("src_in", "src_out", "at")
-                )
+                start, end = (int(row[key]) for key in ("src_in", "src_out"))
+                value = row["at"]
+                at_ms = 0 if value.startswith("marker:") else int(value)
                 if start < 0 or end <= start or at_ms < 0:
                     raise ValueError("require 0 <= src_in < src_out and at >= 0")
                 if not image and end > round(stream_duration(video, info) * 1000) + 1:
                     raise ValueError(f"src_out {end} exceeds source duration")
-                at = frame_at(at_ms, project.fps)
+                at = (
+                    resolve_reference(value, fps=project.fps, markers=markers)
+                    if value.startswith("marker:")
+                    else frame_at(at_ms, project.fps)
+                )
                 frames = round(Fraction(end - start, 1000) / speed * project.fps)
             if frames < 1:
                 raise ValueError("segment is shorter than one output frame")
@@ -232,10 +242,18 @@ def load(project: Project) -> list[Shot]:
             if inversion == "true" and not mask_name:
                 raise ValueError("mask_invert requires a mask")
             animation = load_animation(
-                project, row.get("animation") or "", at=at, frames=frames
+                project,
+                row.get("animation") or "",
+                at=at,
+                frames=frames,
+                markers=markers,
             )
             mask_animation = load_animation(
-                project, row.get("mask_animation") or "", at=at, frames=frames
+                project,
+                row.get("mask_animation") or "",
+                at=at,
+                frames=frames,
+                markers=markers,
             )
             if mask_animation and not mask_name:
                 raise ValueError("mask_animation requires a mask")
@@ -309,6 +327,38 @@ def total_frames(project: Project, shots: list[Shot]) -> int:
     )
 
 
+def resolved_positions(shots: list[Shot]) -> list[dict]:
+    result = []
+    for shot in shots:
+        animations = {}
+        for name, animation in (
+            ("layer", shot.animation),
+            ("mask", shot.mask_animation),
+        ):
+            if animation:
+                animations[name] = {
+                    prop: [
+                        dict(
+                            frame=k.frame,
+                            timeline_frame=shot.at + k.frame,
+                            value=k.value,
+                            interpolation=k.interpolation,
+                        )
+                        for k in keys
+                    ]
+                    for prop, keys in animation.properties
+                }
+        result.append(
+            dict(
+                row=shot.row,
+                start_frame=shot.at,
+                end_frame=shot.end,
+                animations=animations,
+            )
+        )
+    return result
+
+
 def validate(project: Project) -> dict:
     shots = load(project)
     total = total_frames(project, shots)
@@ -346,6 +396,11 @@ def validate(project: Project) -> dict:
         warnings.append("Timeline gaps will show the configured background")
     return {
         "valid": True,
+        "positions": resolved_positions(shots),
+        "markers": {
+            name: round(time * project.fps)
+            for name, time in named_markers(project).items()
+        },
         "segments": len(shots),
         "duration_frames": total,
         "fps": str(project.fps),
@@ -382,6 +437,25 @@ def visualize(project: Project) -> dict:
                 f'<rect x="{x}" y="{y}" width="{w}" height="40" rx="4" fill="hsl({shot.row * 57 % 360},50%,40%)"><title>{escape(shot.asset)}: {shot.at}–{shot.end}</title></rect>'
             )
             svg.append(f'<text x="{x + 4}" y="{y + 24}">{escape(shot.asset)}</text>')
+    for name, position in named_markers(project).items():
+        frame = round(position * project.fps)
+        if frame > total:
+            continue
+        x = 100 + 980 * frame / total
+        svg.append(
+            f'<path d="M{x},42 V{height - 15}" stroke="#ffd166" stroke-dasharray="4 3"><title>marker:{escape(name)}: frame {frame}</title></path>'
+        )
+        svg.append(f'<text x="{x}" y="42">{escape(name)}</text>')
+    for shot, position in zip(shots, resolved_positions(shots), strict=True):
+        layer_y = 55 + layers.index(shot.layer) * 65
+        for target, properties in position["animations"].items():
+            for prop, keys in properties.items():
+                for key in keys:
+                    frame = key["timeline_frame"]
+                    x = 100 + 980 * frame / total
+                    svg.append(
+                        f'<circle cx="{x}" cy="{layer_y + 35}" r="3" fill="white"><title>row {shot.row} {target}.{prop}: timeline frame {frame}, local frame {key["frame"]}</title></circle>'
+                    )
     svg.append("</g></svg>")
     path = project.generated("output/timeline.svg")
     atomic_text(path, "\n".join(svg))

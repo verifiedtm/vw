@@ -44,6 +44,7 @@ def parser() -> argparse.ArgumentParser:
     )
     marker.add_argument("label")
     marker.add_argument("--kind", default="cut")
+    marker.add_argument("--id", default="", help="unique marker reference identifier")
     sheet = commands.add_parser(
         "contact-sheet", help="sample source footage or rendered output"
     )
@@ -97,6 +98,7 @@ def main(argv: list[str] | None = None) -> None:
                         args.kind,
                         args.label,
                         at_frame=args.time_ms if args.frames else None,
+                        id=args.id,
                     )
                 case "contact-sheet":
                     result = contact.contact_sheet(project, args.asset, args.count)
