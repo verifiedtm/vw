@@ -1,0 +1,64 @@
+# Manually run from Actions > publish snapshot > Run workflow (master).
+# The tag is a UTC date plus the source commit's eight-character SHA.
+name: publish snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: name snapshot
+        id: meta
+        shell: bash
+        run: |
+          echo "id=$(date -u +%Y-%m-%d)-${GITHUB_SHA:0:8}" >> "$GITHUB_OUTPUT"
+
+      - name: package source
+        shell: bash
+        env:
+          SNAPSHOT: ${{ steps.meta.outputs.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=tar --prefix=vw/ HEAD | gzip -n > "dist/vw-${SNAPSHOT}.tar.gz"
+          (cd dist && sha256sum "vw-${SNAPSHOT}.tar.gz" > SHA256SUMS)
+
+      # GitHub's connected-app download supports workflow artifacts.
+      # Releases retain the same bundle after workflow artifacts expire.
+      - name: upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vw-${{ steps.meta.outputs.id }}
+          path: |
+            dist/vw-${{ steps.meta.outputs.id }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAPSHOT: ${{ steps.meta.outputs.id }}
+        run: |
+          set -euo pipefail
+          if gh release view "$SNAPSHOT" >/dev/null 2>&1; then
+            echo "::error::release $SNAPSHOT already exists; snapshots are immutable"
+            exit 1
+          fi
+          gh release create "$SNAPSHOT" \
+            "dist/vw-${SNAPSHOT}.tar.gz" \
+            dist/SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title "$SNAPSHOT" \
+            --notes "Source snapshot of commit $GITHUB_SHA. Extract the archive, then run 'uv run --locked vw --help' inside vw/. Requires Python 3.13+, uv, and ffmpeg."
