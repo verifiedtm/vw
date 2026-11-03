@@ -3,21 +3,32 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
+import time
 from fractions import Fraction
 from pathlib import Path
 
+from . import metrics
 from .project import WorkbenchError
 
 
-def run(args: list[str], *, binary: bool = False):
+def run(args: list[str], *, binary: bool = False, report: str | None = None):
+    started = time.perf_counter()
     try:
         result = subprocess.run(
             [str(arg) for arg in args],
             capture_output=True,
             check=True,
         )
+        if report:
+            counts = re.findall(rb"(\d+) frames decoded", result.stderr)
+            metrics.emit(
+                report,
+                seconds=time.perf_counter() - started,
+                decoded_frames=sum(map(int, counts)) if counts else None,
+            )
         return result.stdout if binary else result.stdout.decode()
     except FileNotFoundError as exc:
         raise WorkbenchError(
@@ -34,7 +45,7 @@ def ffmpeg(args: list[str]) -> None:
             "ffmpeg",
             "-hide_banner",
             "-loglevel",
-            "error",
+            "debug" if metrics.enabled() else "error",
             "-nostdin",
             "-y",
             "-filter_threads",
@@ -42,7 +53,8 @@ def ffmpeg(args: list[str]) -> None:
             "-filter_complex_threads",
             "1",
             *args,
-        ]
+        ],
+        report="ffmpeg_decode",
     )
 
 
@@ -122,7 +134,9 @@ def stream_duration(stream: dict, metadata: dict) -> float:
     return duration(metadata)
 
 
-def frame_boundaries(path: Path, stream: dict) -> list[Fraction]:
+def frame_boundaries(
+    path: Path, stream: dict, *, frames: list | None = None
+) -> list[Fraction]:
     """Decoded presentation-order boundaries, including the end of the last frame.
 
     Use integer timestamps and the stream time base, never decimal seconds or
@@ -138,13 +152,17 @@ def frame_boundaries(path: Path, stream: dict) -> list[Fraction]:
                 str(stream["index"]),
                 "-show_frames",
                 "-show_entries",
-                "frame=best_effort_timestamp,duration,pkt_duration",
+                "frame=best_effort_timestamp,duration,pkt_duration,key_frame",
                 "-of",
                 "json",
                 str(path),
-            ]
+            ],
+            report="frame_probe_time",
         )
     )["frames"]
+    if frames is not None:
+        frames.extend(data)
+    metrics.emit("frame_probe", source=str(path), decoded_frames=len(data))
     tick = Fraction(stream["time_base"])
     try:
         stamps = [int(frame["best_effort_timestamp"]) * tick for frame in data]

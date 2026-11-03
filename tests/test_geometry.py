@@ -241,6 +241,7 @@ def test_invalid_geometry_timeline(project, row, message):
     assert not project.path("output/final.mp4").exists()
 
 
+@pytest.mark.integration
 def test_shape_only_project_and_legacy_csv(tmp_path):
     root = tmp_path / "edit"
     initialize(root)

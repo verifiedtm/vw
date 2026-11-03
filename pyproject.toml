@@ -26,3 +26,8 @@ select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = '-m "not integration"'
+markers = [
+    "integration: comprehensive ffmpeg/media checks (opt in with -m integration or just test-all)",
+    "smoke: small real-media checks included in the rapid default suite",
+]

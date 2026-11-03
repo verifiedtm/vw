@@ -8,6 +8,14 @@ from vw.ffmpeg import ffmpeg
 from vw.project import Project, initialize
 
 
+def pytest_collection_modifyitems(items):
+    # Project/media fixtures invoke ffmpeg and ffprobe. Keep this boundary in one
+    # place so new end-to-end cases cannot silently slow the iteration suite.
+    for item in items:
+        if "media" in item.fixturenames and item.get_closest_marker("smoke") is None:
+            item.add_marker(pytest.mark.integration)
+
+
 @pytest.fixture(scope="session")
 def media(tmp_path_factory):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
