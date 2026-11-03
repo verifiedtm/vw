@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import asdict, replace
 
+from . import frame_index, metrics
 from .animation import filters as animation_filters
 from .ffmpeg import digest, export, probe, version
 from .geometry import rasterize
@@ -72,6 +73,7 @@ def prepare(
                 and stream["height"] == h
                 and int(stream.get("nb_frames", 0)) == shot.frames
             ):
+                metrics.emit("normalized_cache", status="hit", source=str(source))
                 return destination, True
         except (WorkbenchError, StopIteration, ValueError):
             pass
@@ -80,6 +82,20 @@ def prepare(
         if shot.frame_indexed and not shot.image
         else f"trim=duration={float((shot.src_out - shot.src_in) / (project.fps if shot.frame_indexed else 1000)):.12f}"
     )
+    metrics.emit("normalized_cache", status="miss", source=str(source))
+    seek_inputs = []
+    source_index = None
+    if shot.frame_indexed and not shot.image:
+        video = next(
+            s
+            for s in frame_index.metadata(source)["streams"]
+            if s["codec_type"] == "video"
+            and not s.get("disposition", {}).get("attached_pic")
+        )
+        source_index = frame_index.load(project, source, video)
+        plan = source_index.seek(shot.src_in, shot.src_out)
+        if plan:
+            seek_inputs, trim = plan
     filters = [
         trim,
         f"setpts=(PTS-STARTPTS)/({shot.speed})",
@@ -162,7 +178,7 @@ def prepare(
     if not shot.frame_indexed:
         source_start = 0 if shot.shape else shot.src_in
         inputs += ["-ss", f"{source_start / 1000:.9f}"]
-    inputs += ["-i", str(source)]
+    inputs += [*seek_inputs, "-i", str(source)]
     if shot.mask:
         mask_path = rasterize(project, shot.mask, (w, h))
         inputs += ["-loop", "1", "-i", str(mask_path)]
@@ -203,6 +219,12 @@ def prepare(
         ],
         destination,
     )
+    if source_index is not None:
+        try:
+            source_index.check_source()
+        except WorkbenchError:
+            destination.unlink(missing_ok=True)
+            raise
     return destination, False
 
 

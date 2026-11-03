@@ -88,6 +88,7 @@ my-edit/
 ├── cache/
 │   ├── normalized/       # lossless RGBA shot intermediates (.mov)
 │   ├── animated/         # animated RGBA shots (.mov)
+│   ├── frame-index/      # source presentation timestamps and lazy seek checksums
 │   ├── geometry/         # generated RGBA shapes (.png)
 │   ├── thumbnails/       # labeled contact sheets and extracted frames
 │   └── waveforms/        # waveform PNG, envelope JSON, suggestion CSV
@@ -143,7 +144,11 @@ trims decode from the beginning to select the exact source range. For VFR footag
 original presentation timestamps determine cadence and duration; the exclusive
 end uses the next frame's timestamp, or the final frame's declared duration at
 EOF. Missing/non-increasing timestamps or an unknown final duration are rejected.
-This indexing requires a full source-frame probe when loading a frame-based edit.
+The first load probes every decoded source frame. Later loads reuse a persistent
+content-addressed index under `cache/frame-index/`, shared across preview/final
+and repeated invocations. Source bytes, selected stream/time base, index format,
+and ffprobe/ffmpeg builds determine its identity. Replacing source media or
+changing tools invalidates reuse; malformed entries are rebuilt atomically.
 
 `at_frame` is always an **output project frame**. Optional positive `nframes` fixes
 the exact output length after speed/cadence conversion: excess frames are trimmed,
@@ -576,6 +581,50 @@ Changing a shot's trim or replacing its source invalidates that shot. Changing
 project geometry invalidates affected preparation. Lossless alpha intermediates
 favor inspectability and correctness over disk space; keep projects short and
 remove old cache entries manually when needed.
+
+
+Frame-addressed video cuts can use bounded seeking when the skipped prefix is
+at least 30 seconds and the GOP estimate predicts fewer total decoded frames.
+Keyframe flags only choose a candidate seek point. Before using it, every
+requested source frame's timestamp, decoded byte size, and SHA-256 checksum must
+match a full-decode reference index. That checksum index is created lazily on the
+first useful seek and reused across edits and output settings. Verification and
+normalization each perform a bounded decode. Short/early cuts, unsupported hash
+paths, and mismatches use the exact decode-from-start path. Millisecond cuts keep
+their existing seek behavior.
+
+This trades a slower first useful seek for faster repeated extraction from long
+sources; it does not promise a faster first render. There is no approximate-seek
+mode. Normalized shots keep their existing cache keys and reuse behavior.
+Deleting `cache/frame-index/` also removes cached checksum failures and forces a
+fresh attempt. A bounded in-process cache avoids re-probing sources across repeated
+loads; source stat changes invalidate it, and new processes rehash source bytes.
+
+Set `VW_FRAME_DIAGNOSTICS=1` to emit JSON events on stderr (stdout stays suitable
+for `--json`). Events report disk/memory hits, misses, invalid entries, probe time,
+reference hashing, seek verification/fallback reasons, normalization hits, and
+FFmpeg wall time/decoded-frame counts. Python callers can instead attach an INFO
+handler to `logging.getLogger("vw.performance")`. Decoded-frame counts come from
+FFmpeg's debug summary; a missing counter is reported as `null`, never estimated.
+
+Reproduce the performance matrix in a new directory:
+
+```sh
+uv run python examples/benchmark_frames.py /tmp/vw-frame-benchmark
+# Optional larger sources and more warm-load samples:
+uv run python examples/benchmark_frames.py /tmp/vw-frame-benchmark-large --long-seconds 600 --repeats 5
+```
+
+The harness generates CFR, VFR, B-frame/long-GOP sources, tests early/late/ten
+scattered cuts, and runs reference and optimized paths in fresh processes. It
+writes `results.json` with per-phase events, wall time, decoded-frame counts,
+probe time, cache behavior, platform, and complete tool versions. `cold-load`
+starts without metadata; `warm-load` retains it. `first-prepare` has warm metadata
+but cold checksums/shots; `warm-prepare` deletes only normalized shots and retains
+checksums. Preview and final each force new shot preparation, followed by a
+repeated render using normalized shots. OS page caches are not cleared. Use the
+JSON to compare each phase separately; source generation and ingestion are outside
+the measurements.
 
 Each export has a JSON manifest with source/config/timeline/marker hashes, resolved positions, settings,
 frame count, prepared artifact paths, and cache hit count. No timestamp or random

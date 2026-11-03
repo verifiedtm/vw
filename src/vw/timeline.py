@@ -5,9 +5,10 @@ import re
 from dataclasses import dataclass
 from fractions import Fraction
 
+from . import frame_index
 from .animation import Animation, load_animation
 from .assets import IMAGE_EXTENSIONS
-from .ffmpeg import frame_boundaries, probe, stream_duration
+from .ffmpeg import probe, stream_duration
 from .geometry import Shape, load_shapes
 from .markers import named_markers, resolve_reference
 from .presentation import display_size, placement, upscale_limit
@@ -90,7 +91,7 @@ def load(project: Project) -> list[Shot]:
                         "timeline sources must live outside generated cache/ and output/ directories"
                     )
                 if asset not in metadata:
-                    metadata[asset] = probe(path)
+                    metadata[asset] = frame_index.metadata(path)
                 info = metadata[asset]
                 video = next(
                     (
@@ -144,7 +145,9 @@ def load(project: Project) -> list[Shot]:
                     length = Fraction(end - start, 1) / project.fps
                 else:
                     if asset not in boundaries:
-                        boundaries[asset] = frame_boundaries(path, video)
+                        boundaries[asset] = frame_index.load(
+                            project, path, video
+                        ).boundaries
                     stamps = boundaries[asset]
                     if end >= len(stamps):
                         raise ValueError(
