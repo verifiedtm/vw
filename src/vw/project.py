@@ -49,6 +49,8 @@ TIMELINE_FIELDS = [
     "transition",
     "transition_frames",
     "opacity",
+    "mask",
+    "mask_invert",
 ]
 MARKER_FIELDS = ["time_ms", "kind", "label", "origin"]
 DEFAULT_CONFIG = """# All CSV times are integer milliseconds, rounded once to the nearest output frame.
@@ -189,6 +191,9 @@ class Project:
                 )
             if not isinstance(settings.get("audio_master", ""), str):
                 raise ValueError("audio_master must be an asset ID or relative path")
+            from .geometry import load_shapes
+
+            load_shapes(config)
             return project
         except (OSError, ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
             raise WorkbenchError(f"Invalid {root / 'project.toml'}: {exc}") from exc
@@ -221,6 +226,10 @@ class Project:
         rows = read_csv(self.path("assets.csv"), ["asset", "path"])
         result = {}
         for row in rows:
+            if row["asset"].startswith("shape:"):
+                raise WorkbenchError(
+                    "assets.csv: shape: is reserved for generated sources"
+                )
             if not row["asset"] or row["asset"] in result:
                 raise WorkbenchError("assets.csv: empty or duplicate asset ID")
             self.path(row["path"])

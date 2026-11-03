@@ -87,6 +87,7 @@ my-edit/
 ├── sources/
 ├── cache/
 │   ├── normalized/       # lossless RGBA shot intermediates (.mov)
+│   ├── geometry/         # generated RGBA shapes (.png)
 │   ├── thumbnails/       # labeled contact sheets and extracted frames
 │   └── waveforms/        # waveform PNG, envelope JSON, suggestion CSV
 └── output/               # preview.mp4, final.mp4, manifests, reports, timeline.svg
@@ -144,6 +145,8 @@ Use rational speeds such as `3/2` when exact ratios matter.
 | transition | cut (default), fade, or crossfade |
 | transition_frames | positive output frame count for fade/crossfade |
 | opacity | 0–1, default 1 |
+| mask | optional shape name from project.toml; clips the fitted segment's alpha |
+| mask_invert | `true` inverts mask coverage; `false` (default) keeps the shape interior |
 
 Within a layer, later CSV rows composite on top of earlier rows. Gaps show the
 configured background. `contain` uses transparent padding, showing the background
@@ -172,6 +175,80 @@ contrast = 1.05   # 0–3
 brightness = 0.02 # -1–1
 ```
 
+### Shapes and alpha masks
+
+Define rectangles and ellipses in `project.toml`. Use `shape:<name>` as a timeline
+asset to display a shape, or put its name in `mask` to clip a media segment:
+
+```toml
+[shapes.circle]
+type = "ellipse"
+x = 0.5
+y = 0.5
+width = 0.6
+height = 0.6
+
+[shapes.panel]
+type = "rectangle"
+x = 0.5
+y = 0.85
+width = 1.2
+height = 0.15
+fill = "#204060"
+stroke = "#ffffff"
+stroke_width = 0.01
+opacity = 0.8
+```
+
+```csv
+asset,src_in,src_out,at,layer,mask,mask_invert
+clip-001,0,2000,0,0,circle,false
+shape:panel,0,2000,0,1,,
+```
+
+The `shape:` prefix is reserved for generated sources. Shape-only projects do not
+need ingested media. A generated source uses image timing: its source interval
+sets its duration, and speed, placement, layers, opacity, and transitions work as
+usual. Leave crop, rotation, fit, and effect at their defaults for shape sources.
+Shape and mask properties are static; animation is not currently supported.
+
+`x` and `y` are center coordinates from 0 to 1, measured against canvas width and
+height, with the origin at the top-left. `width` and `height` are positive values
+up to 2, measured against the **shorter canvas dimension**. Equal ellipse
+dimensions produce circles. `stroke_width` uses the same units and cannot exceed
+half the smaller shape dimension. Strokes are drawn inside the bounding box.
+Shapes extending beyond the canvas are clipped.
+
+Fill defaults to white, stroke to `none`, stroke width to 0, and opacity to 1.
+Colors accept `#RRGGBB` or `none`; a visible stroke requires a positive width.
+Opacity must be between 0 and 1. Geometry values must be finite numbers.
+Unknown properties and unsupported shape types are rejected.
+
+Geometry is resolved at each target resolution, including preview rounding.
+Normalized centers and proportions persist when resolution or aspect ratio
+changes. Shapes use 4× supersampling with Lanczos downsampling, so boundaries
+have fractional alpha; small rasterization differences between preview and final
+are expected.
+
+Masks use shape alpha, including stroke, opacity, and antialiasing; fill colors
+do not change coverage. Masks operate in canvas space after media crop, rotation,
+and fitting, multiplying the source's existing alpha. Inversion replaces mask
+coverage with `1 - coverage`. Shot opacity and fades apply afterward. A mask
+shares its segment's timing and creates no visible layer. One mask per segment
+is supported; generated shapes can also have masks.
+
+Prepared shots preserve transparency. MP4 exports composite them over lower
+layers and the configured background, producing opaque output.
+
+Run a standalone example with generated footage, a circular mask, and a panel:
+
+```sh
+uv run python examples/make_geometry_demo.py /tmp/vw-geometry-demo
+```
+
+The destination must be new or empty. Edit its project and timeline files to
+experiment, then use the usual preview and final render commands.
+
 ### markers.csv and analysis
 
 Columns: `time_ms,kind,label,origin`. `vw marker` adds a row with `origin=manual`
@@ -188,7 +265,9 @@ resolution is 20 ms; reported analysis duration rounds up to a complete window.
 
 Prepared shots use content-addressed keys including source bytes, the ffmpeg
 version, target dimensions/fps, transforms, relevant effect settings, and a
-pipeline version. Moving a shot or changing its layer reuses preparation.
+pipeline version. Generated geometry keys include shape properties, target size,
+Pillow version, and the rasterization policy. Referenced masks also participate
+in shot cache keys. Moving a shot or changing its layer reuses preparation.
 Changing a shot's trim or replacing its source invalidates that shot. Changing
 project geometry invalidates affected preparation. Lossless alpha intermediates
 favor inspectability and correctness over disk space; keep projects short and
@@ -230,7 +309,7 @@ diagnostics = validate(project)
 manifest = render(project, preview=True)
 ```
 
-The public modules are `project`, `assets`, `audio`, `timeline`, `normalize`,
+The public modules are `project`, `assets`, `audio`, `timeline`, `geometry`, `normalize`,
 `render`, `contact`, `inspect`, and `ffmpeg`. Errors use `WorkbenchError`.
 There is no database, daemon, web service, MoviePy dependency, or agent adapter.
 

@@ -5,10 +5,11 @@ import json
 from dataclasses import asdict
 
 from .ffmpeg import digest, export, probe, version
+from .geometry import rasterize
 from .project import Project, WorkbenchError
 from .timeline import Shot
 
-PIPELINE_VERSION = 1
+PIPELINE_VERSION = 2
 
 
 def dimensions(project: Project, preview: bool) -> tuple[int, int]:
@@ -27,15 +28,21 @@ def prepare(
     identity: str | None = None,
     tool_version: str | None = None,
 ):
-    source = project.media(shot.asset)
     w, h = dimensions(project, preview)
+    source = (
+        rasterize(project, shot.shape, (w, h))
+        if shot.shape
+        else project.media(shot.asset)
+    )
     key = {
         "pipeline": PIPELINE_VERSION,
-        "source": identity or digest(source),
+        "source": identity or (shot.shape.identity() if shot.shape else digest(source)),
         "tool": tool_version or version(),
         "shot": asdict(shot),
         "size": [w, h],
         "fps": str(project.fps),
+        "geometry_source": shot.shape.identity() if shot.shape else None,
+        "geometry_mask": shot.mask.identity() if shot.mask else None,
         "effect_settings": project.config.get("effects", {}).get(shot.effect, {}),
     }
     key["shot"].pop("row")
@@ -103,7 +110,9 @@ def prepare(
             "format=yuva444p",
             "eq=" + ":".join(f"{k}={v}" for k, v in treatment.items()),
         ]
-    filters += ["format=argb", f"colorchannelmixer=aa={shot.opacity}"]
+    # Masks operate on fitted canvas alpha; opacity and fades follow masking.
+    canvas_filters = filters
+    filters = ["format=argb", f"colorchannelmixer=aa={shot.opacity}"]
     if shot.transition in ("fade", "crossfade"):
         filters += [f"fade=t=in:s=0:n={shot.transition_frames}:alpha=1"]
         if shot.transition == "fade":
@@ -118,18 +127,29 @@ def prepare(
         "setsar=1",
     ]
     inputs = ["-loop", "1"] if shot.image else []
+    source_start = 0 if shot.shape else shot.src_in
+    inputs += ["-ss", f"{source_start / 1000:.9f}", "-i", str(source)]
+    if shot.mask:
+        mask_path = rasterize(project, shot.mask, (w, h))
+        inputs += ["-loop", "1", "-i", str(mask_path)]
+        mask_filters = f"fps={project.fps},format=rgba,alphaextract"
+        if shot.mask_invert:
+            mask_filters += ",negate"
+        graph = (
+            f"[0:v]{','.join(canvas_filters)},split[color][alpha];"
+            "[alpha]alphaextract[a];"
+            f"[1:v]{mask_filters}[mask];"
+            "[a][mask]blend=all_expr='A*B/255'[coverage];"
+            f"[color][coverage]alphamerge,{','.join(filters)}[out]"
+        )
+        filter_args = ["-filter_complex", graph, "-map", "[out]"]
+    else:
+        filter_args = ["-vf", ",".join(canvas_filters + filters), "-map", "0:v:0"]
     export(
         [
             *inputs,
-            "-ss",
-            f"{shot.src_in / 1000:.9f}",
-            "-i",
-            str(source),
-            "-map",
-            "0:v:0",
+            *filter_args,
             "-an",
-            "-vf",
-            ",".join(filters),
             "-frames:v",
             str(shot.frames),
             "-c:v",

@@ -22,7 +22,10 @@ def render(project: Project, preview: bool = False) -> dict:
     if not re.fullmatch(r"[A-Za-z]+|0x[0-9a-fA-F]{6}", background):
         raise WorkbenchError("background must be a color name or 0xRRGGBB")
     tool = version()
-    hashes = {s.asset: digest(project.media(s.asset)) for s in shots}
+    hashes = {
+        s.asset: s.shape.identity() if s.shape else digest(project.media(s.asset))
+        for s in shots
+    }
     prepared = [
         prepare(project, s, preview, identity=hashes[s.asset], tool_version=tool)
         for s in shots
@@ -112,6 +115,7 @@ def render(project: Project, preview: bool = False) -> dict:
         "height": h,
         "tool": tool,
         "sources": hashes,
+        "geometry_masks": {str(s.row): s.mask.identity() for s in shots if s.mask},
         "audio_sha256": digest(project.media(audio)) if audio else None,
         "project_sha256": digest(project.path("project.toml")),
         "timeline_sha256": digest(project.path("timeline.csv")),

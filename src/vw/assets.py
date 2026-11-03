@@ -93,6 +93,8 @@ def ingest(project: Project, source: str | Path) -> dict:
         key = by_path.get(relative)
         if key is None:
             base = target.stem
+            if base.startswith("shape:"):
+                base = f"media-{base}"
             key = base
             number = 2
             while key in assets:
