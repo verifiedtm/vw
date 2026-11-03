@@ -7,10 +7,11 @@ from dataclasses import asdict, replace
 from .animation import filters as animation_filters
 from .ffmpeg import digest, export, probe, version
 from .geometry import rasterize
+from .presentation import placement
 from .project import Project, WorkbenchError
 from .timeline import Shot
 
-PIPELINE_VERSION = 3
+PIPELINE_VERSION = 4
 
 
 def dimensions(project: Project, preview: bool) -> tuple[int, int]:
@@ -45,6 +46,7 @@ def prepare(
         "tool": tool_version or version(),
         "shot": asdict(shot),
         "size": [w, h],
+        "presentation": placement(project, shot, (w, h)),
         "fps": str(project.fps),
         "geometry_source": shot.shape.identity() if shot.shape else None,
         "geometry_mask": shot.mask.identity() if shot.mask else None,
@@ -83,7 +85,10 @@ def prepare(
         f"setpts=(PTS-STARTPTS)/({shot.speed})",
     ]
     if shot.crop:
-        filters.append("crop=" + ":".join(str(n) for n in shot.crop))
+        crop_filter = "crop=" + ":".join(str(n) for n in shot.crop)
+        if shot.max_upscale is not None:
+            crop_filter += ":exact=1"
+        filters.append(crop_filter)
     filters += {
         0: [],
         90: ["transpose=1"],
@@ -91,12 +96,26 @@ def prepare(
         270: ["transpose=2"],
     }[shot.rotation]
     # Convert SDR inputs explicitly to BT.709, limited range before composition.
-    filters += [
-        f"fps={project.fps}",
-        "scale=iw*sar:ih:out_color_matrix=bt709:out_range=tv",
-        "setsar=1",
-    ]
-    if shot.fit == "contain":
+    filters.append(f"fps={project.fps}")
+    if shot.max_upscale is None:
+        filters += [
+            "scale=iw*sar:ih:out_color_matrix=bt709:out_range=tv",
+            "setsar=1",
+        ]
+    if shot.max_upscale is not None and not shot.shape:
+        layout = placement(project, shot, (w, h))["target"]
+        sw, sh = layout["scaled_size"]
+        vw, vh = layout["visible_size"]
+        cx, cy = layout["crop_offset"]
+        x, y = layout["position"]
+        filters += [
+            f"scale={sw}:{sh}:out_color_matrix=bt709:out_range=tv",
+            "format=rgba",
+            "setsar=1",
+            f"crop={vw}:{vh}:{cx}:{cy}:exact=1",
+            f"pad={w}:{h}:{x}:{y}:color=black@0",
+        ]
+    elif shot.fit == "contain":
         filters += [
             f"scale={w}:{h}:force_original_aspect_ratio=decrease",
             "format=rgba",

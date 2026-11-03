@@ -9,6 +9,7 @@ from .animation import Animation, load_animation
 from .assets import IMAGE_EXTENSIONS
 from .ffmpeg import frame_boundaries, probe, stream_duration
 from .geometry import Shape, load_shapes
+from .presentation import display_size, placement, upscale_limit
 from .project import Project, WorkbenchError, read_csv
 
 
@@ -37,6 +38,8 @@ class Shot:
     blend_mode: str = "normal"
     animation: Animation | None = None
     mask_animation: Animation | None = None
+    max_upscale: float | None = None
+    display_size: tuple[Fraction, Fraction] | None = None
 
     @property
     def end(self):
@@ -191,6 +194,12 @@ def load(project: Project) -> list[Shot]:
                     or y + h > source_h
                 ):
                     raise ValueError("crop lies outside source dimensions")
+            max_upscale = upscale_limit(
+                row.get("max_upscale") or project.config["project"].get("max_upscale")
+            )
+            if shape and row.get("max_upscale"):
+                raise ValueError("generated shapes do not support max_upscale")
+            native_size = None if shape else display_size(video, crop, rotation)
             effect = row.get("effect") or ""
             if (
                 effect
@@ -255,6 +264,8 @@ def load(project: Project) -> list[Shot]:
                     blend_mode,
                     animation,
                     mask_animation,
+                    None if shape else max_upscale,
+                    native_size,
                 )
             )
         except (ValueError, ZeroDivisionError, KeyError, WorkbenchError) as exc:
@@ -340,6 +351,7 @@ def validate(project: Project) -> dict:
         "fps": str(project.fps),
         "gaps": gaps,
         "warnings": warnings,
+        "presentation": {str(s.row): placement(project, s) for s in shots},
     }
 
 
