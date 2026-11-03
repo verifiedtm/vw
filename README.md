@@ -87,6 +87,7 @@ my-edit/
 ├── sources/
 ├── cache/
 │   ├── normalized/       # lossless RGBA shot intermediates (.mov)
+│   ├── animated/         # animated RGBA shots (.mov)
 │   ├── geometry/         # generated RGBA shapes (.png)
 │   ├── thumbnails/       # labeled contact sheets and extracted frames
 │   └── waveforms/        # waveform PNG, envelope JSON, suggestion CSV
@@ -178,6 +179,8 @@ frame CSV preserves its indices without any millisecond conversion.
 | opacity | 0–1, default 1 |
 | blend_mode | normal (default), screen, add, multiply, or difference |
 | mask | optional shape name from project.toml; clips the fitted segment's alpha |
+| animation | optional project-relative JSON keyframe file for the layer |
+| mask_animation | optional JSON keyframe file for the mask; requires `mask` |
 | mask_invert | `true` inverts mask coverage; `false` (default) keeps the shape interior |
 
 Within a layer, later CSV rows composite on top of earlier rows. Gaps show the
@@ -309,7 +312,7 @@ The `shape:` prefix is reserved for generated sources. Shape-only projects do no
 need ingested media. A generated source uses image timing: its source interval
 sets its duration, and speed, placement, layers, opacity, and transitions work as
 usual. Leave crop, rotation, fit, and effect at their defaults for shape sources.
-Shape and mask properties are static; animation is not currently supported.
+Animate shape layers and masks with the same keyframe files used for media below.
 
 `x` and `y` are center coordinates from 0 to 1, measured against canvas width and
 height, with the origin at the top-left. `width` and `height` are positive values
@@ -364,6 +367,115 @@ suggestions for prominent onsets, quiet passages, and changes in intensity.
 These are suggestions rather than a reliable musical beat grid. The window
 resolution is 20 ms; reported analysis duration rounds up to a complete window.
 
+### Keyframe animation
+
+Reference a JSON file from the optional `animation` column in `timeline.csv`.
+Paths must stay inside the project, outside generated `cache/` and `output/`.
+For example, save this as `animations/move.json`:
+
+```json
+{
+  "version": 1,
+  "time_base": "local",
+  "time_unit": "frames",
+  "properties": {
+    "x": [{"time": 0, "value": -0.25}, {"time": 29, "value": 0.25}],
+    "y": [{"time": 0, "value": 0}, {"time": 29, "value": 0.1}],
+    "scale": [{"time": 0, "value": 0.5}, {"time": 29, "value": 1}],
+    "rotation": [{"time": 0, "value": 0}, {"time": 29, "value": 90}],
+    "opacity": [{"time": 0, "value": 0}, {"time": 10, "value": 1}],
+    "saturation": [
+      {"time": 0, "value": 0, "interpolation": "hold"},
+      {"time": 15, "value": 1}
+    ]
+  }
+}
+```
+
+```csv
+asset,src_in_frame,src_out_frame,at_frame,nframes,animation
+clip-001,0,30,0,30,animations/move.json
+```
+
+`version`, `time_base`, and `time_unit` default to `1`, `local`, and `frames`.
+Times are nonnegative integers. `local` counts **output frames since the segment
+starts**, independent of source trim and speed. `timeline` counts from timeline
+frame zero, then subtracts the segment's rounded start frame. With `time_unit =
+"ms"`, integer milliseconds convert once using exact project FPS and nearest-even
+rounding, just like timeline times. Keys must resolve within the segment's visible
+frames (`0` through `nframes - 1` locally). Preview and final use the same frames.
+
+Keys may be written in any order. Duplicate properties, unknown fields, empty
+tracks, nonfinite values, and keys that collide after rounding fail validation.
+A key's `interpolation` controls the interval **from that key to the next**:
+`linear` (default) interpolates by output frame, and `hold` keeps the earlier
+value until the exact next key frame. At a key frame its value applies. Before
+the first and after the last key, the nearest endpoint value holds. Rotation
+interpolates numeric degrees without shortest-path wrapping.
+
+| Property | Default | Bounds and units |
+| --- | --- | --- |
+| x, y | 0 | -10 to 10; offsets as fractions of canvas width/height, positive right/down |
+| scale | 1 | 0.01 to 100; uniform multiplier |
+| rotation | 0 | -36000 to 36000; clockwise degrees |
+| opacity | 1 | 0 to 1; multiplies existing alpha and static opacity/fades |
+| brightness | 0 | -1 to 1 |
+| contrast | 1 | 0 to 3 |
+| saturation | 1 | 0 to 3 |
+
+Unkeyed properties use these neutral defaults. Source normalization, crop, static
+quarter-turn rotation, fit, and the static effect preset run first. Masks multiply
+fitted source alpha; static opacity and transitions also multiply coverage.
+Animated treatment then applies on top of the static preset in BT.709 YUV, followed
+by uniform scale and clockwise rotation about the **canvas center**, translation,
+and animated opacity. The affine transform samples directly onto the fixed output
+canvas with transparent out-of-bounds coverage and premultiplied bilinear sampling.
+It never rescales a rotated bounding box to fit or clips an intermediate rotated
+surface. Content outside the final canvas is clipped. Contain padding is part of
+the transformed canvas; cover cropping and geometry rasterization have already
+clipped their sources before animation.
+
+Generated `shape:` layers accept `animation` with the same semantics. To animate
+only a mask, put a JSON path in `mask_animation` alongside `mask`. Mask animation
+uses the same evaluator and transforms, then extracts alpha and applies optional
+inversion. Treatment changes mask color but not coverage. Layer animation moves
+both media and its applied mask together. Animated masks multiply existing source
+alpha, static opacity, and fades; they do not replace them.
+
+Python authors can write the same schema or evaluate it directly:
+
+```python
+from vw.animation import Animation
+from vw.project import Project, write_json
+from vw.timeline import load
+from vw.normalize import prepare
+
+project = Project.load("my-edit")
+keyframes = {
+    "properties": {
+        "x": [
+            {"time": 0, "value": -0.25},
+            {"time": 29, "value": 0.25},
+        ]
+    }
+}
+write_json(project.path("animations/move.json"), keyframes)
+# Reference animations/move.json in the timeline row's animation column.
+shot = load(project)[0]
+prepared_path, cache_hit = prepare(project, shot)
+curve = Animation.from_dict(keyframes, fps=project.fps, at=0, frames=30)
+assert curve.value("x", 0) == -0.25
+```
+
+Animated shots have a separate content-addressed cache. Editing keys reuses static
+normalization; moving a locally timed shot or changing its layer reuses animation
+too. Moving a timeline-timed shot resolves its keys again and may invalidate the
+animation or put keys outside its range. Manifests include the complete resolved
+frame/value/interpolation data for both layer and mask, so changing keys changes
+the edit identity. JSON whitespace and property ordering do not affect cache keys.
+Animation uses CPU per-pixel sampling; high-resolution animated layers cost more
+than static layers.
+
 ## Caching and diagnostics
 
 Prepared shots use content-addressed keys including source bytes, the ffmpeg
@@ -412,7 +524,7 @@ diagnostics = validate(project)
 manifest = render(project, preview=True)
 ```
 
-The public modules are `project`, `assets`, `audio`, `timeline`, `geometry`, `normalize`,
+The public modules are `project`, `assets`, `audio`, `timeline`, `animation`, `geometry`, `normalize`,
 `render`, `contact`, `inspect`, and `ffmpeg`. Errors use `WorkbenchError`.
 There is no database, daemon, web service, MoviePy dependency, or agent adapter.
 

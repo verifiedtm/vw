@@ -56,6 +56,8 @@ TIMELINE_FIELDS = [
     "mask",
     "mask_invert",
     "blend_mode",
+    "animation",
+    "mask_animation",
 ]
 MARKER_FIELDS = ["time_ms", "kind", "label", "origin", "at_frame"]
 DEFAULT_CONFIG = """# Timeline times accept explicit frame indices or legacy integer milliseconds.

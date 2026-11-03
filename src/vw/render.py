@@ -168,6 +168,14 @@ def render(project: Project, preview: bool = False) -> dict:
         "tool": tool,
         "sources": hashes,
         "geometry_masks": {str(s.row): s.mask.identity() for s in shots if s.mask},
+        "animations": {
+            str(s.row): {
+                "layer": s.animation.manifest() if s.animation else None,
+                "mask": s.mask_animation.manifest() if s.mask_animation else None,
+            }
+            for s in shots
+            if s.animation or s.mask_animation
+        },
         "blend_color_space": settings.get("blend_color_space", "encoded"),
         "audio_sha256": digest(project.media(audio)) if audio else None,
         "project_sha256": digest(project.path("project.toml")),

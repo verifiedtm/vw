@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from fractions import Fraction
 
+from .animation import Animation, load_animation
 from .assets import IMAGE_EXTENSIONS
 from .ffmpeg import frame_boundaries, probe, stream_duration
 from .geometry import Shape, load_shapes
@@ -34,6 +35,8 @@ class Shot:
     mask_invert: bool = False
     frame_indexed: bool = False
     blend_mode: str = "normal"
+    animation: Animation | None = None
+    mask_animation: Animation | None = None
 
     @property
     def end(self):
@@ -219,6 +222,14 @@ def load(project: Project) -> list[Shot]:
                 raise ValueError("mask_invert must be true or false")
             if inversion == "true" and not mask_name:
                 raise ValueError("mask_invert requires a mask")
+            animation = load_animation(
+                project, row.get("animation") or "", at=at, frames=frames
+            )
+            mask_animation = load_animation(
+                project, row.get("mask_animation") or "", at=at, frames=frames
+            )
+            if mask_animation and not mask_name:
+                raise ValueError("mask_animation requires a mask")
             shots.append(
                 Shot(
                     number,
@@ -242,6 +253,8 @@ def load(project: Project) -> list[Shot]:
                     inversion == "true",
                     frame_indexed,
                     blend_mode,
+                    animation,
+                    mask_animation,
                 )
             )
         except (ValueError, ZeroDivisionError, KeyError, WorkbenchError) as exc:

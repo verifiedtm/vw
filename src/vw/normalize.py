@@ -2,8 +2,9 @@
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
+from .animation import filters as animation_filters
 from .ffmpeg import digest, export, probe, version
 from .geometry import rasterize
 from .project import Project, WorkbenchError
@@ -28,6 +29,10 @@ def prepare(
     identity: str | None = None,
     tool_version: str | None = None,
 ):
+    if shot.animation or shot.mask_animation:
+        return prepare_animated(
+            project, shot, preview, identity=identity, tool_version=tool_version
+        )
     w, h = dimensions(project, preview)
     source = (
         rasterize(project, shot.shape, (w, h))
@@ -49,6 +54,8 @@ def prepare(
     key["shot"].pop("at")
     key["shot"].pop("layer")
     key["shot"].pop("blend_mode")
+    key["shot"].pop("animation")
+    key["shot"].pop("mask_animation")
     hashed = hashlib.sha256(
         json.dumps(key, sort_keys=True, default=str).encode()
     ).hexdigest()
@@ -157,6 +164,96 @@ def prepare(
         [
             *inputs,
             *filter_args,
+            "-an",
+            "-frames:v",
+            str(shot.frames),
+            "-c:v",
+            "qtrle",
+            "-pix_fmt",
+            "argb",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+            "-color_range",
+            "tv",
+            "-threads",
+            "1",
+        ],
+        destination,
+    )
+    return destination, False
+
+
+def prepare_animated(project, shot, preview, *, identity, tool_version):
+    # Animated masks need the unmasked source. All animation changes reuse this
+    # static normalization artifact, including source decoding, crop, and fit.
+    base = replace(
+        shot,
+        animation=None,
+        mask_animation=None,
+        mask=None if shot.mask_animation else shot.mask,
+        mask_invert=False if shot.mask_animation else shot.mask_invert,
+    )
+    source, _ = prepare(
+        project, base, preview, identity=identity, tool_version=tool_version
+    )
+    key = {
+        "animation_pipeline": 1,
+        "source": source.name,
+        "animation": shot.animation.manifest() if shot.animation else None,
+        "mask_animation": shot.mask_animation.manifest()
+        if shot.mask_animation
+        else None,
+        "mask": shot.mask.identity() if shot.mask_animation else None,
+        "mask_invert": shot.mask_invert,
+    }
+    hashed = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()
+    destination = project.generated(f"cache/animated/{hashed}.mov")
+    w, h = dimensions(project, preview)
+    if destination.is_file():
+        try:
+            stream = next(
+                s for s in probe(destination)["streams"] if s["codec_type"] == "video"
+            )
+            if (stream["width"], stream["height"], int(stream.get("nb_frames", 0))) == (
+                w,
+                h,
+                shot.frames,
+            ):
+                return destination, True
+        except (WorkbenchError, StopIteration, ValueError):
+            pass
+    inputs = ["-i", str(source)]
+    graph = []
+    label = "0:v"
+    if shot.mask_animation:
+        mask = rasterize(project, shot.mask, (w, h))
+        inputs += ["-loop", "1", "-framerate", str(project.fps), "-i", str(mask)]
+        mask_filters = animation_filters(shot.mask_animation) + ["alphaextract"]
+        if shot.mask_invert:
+            mask_filters += ["negate"]
+        graph += [
+            "[0:v]format=rgba,split[color][alpha]",
+            "[alpha]alphaextract[a]",
+            f"[1:v]{','.join(mask_filters)}[mask]",
+            "[a][mask]blend=all_expr='A*B/255'[coverage]",
+            "[color][coverage]alphamerge[masked]",
+        ]
+        label = "masked"
+    layer_filters = (
+        animation_filters(shot.animation) if shot.animation else ["format=argb"]
+    )
+    graph += [f"[{label}]{','.join(layer_filters)}[out]"]
+    export(
+        [
+            *inputs,
+            "-filter_complex",
+            ";".join(graph),
+            "-map",
+            "[out]",
             "-an",
             "-frames:v",
             str(shot.frames),
