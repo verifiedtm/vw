@@ -182,6 +182,8 @@ def render(project: Project, preview: bool = False) -> dict:
         "audio_sha256": digest(project.media(audio)) if audio else None,
         "project_sha256": digest(project.path("project.toml")),
         "timeline_sha256": digest(project.path("timeline.csv")),
+        "markers_sha256": digest(project.path("markers.csv")),
+        "positions": diagnostics["positions"],
         "prepared": [str(p.relative_to(project.root)) for p, _ in prepared],
         "cache_hits": sum(hit for _, hit in prepared),
         "warnings": diagnostics["warnings"],

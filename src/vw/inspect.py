@@ -89,7 +89,10 @@ def inspect(
     if manifest:
         from .ffmpeg import digest
 
-        for name, suffix in (("project", "toml"), ("timeline", "csv")):
+        files = [("project", "toml"), ("timeline", "csv")]
+        if "markers_sha256" in manifest:
+            files.append(("markers", "csv"))
+        for name, suffix in files:
             if digest(project.path(f"{name}.{suffix}")) != manifest.get(
                 f"{name}_sha256"
             ):

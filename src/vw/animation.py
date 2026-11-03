@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from fractions import Fraction
 
+from .markers import named_markers, resolve_reference
 from .project import Project, WorkbenchError
 
 # Defaults are neutral additions to the existing static preparation pipeline.
@@ -32,7 +33,7 @@ class Animation:
     properties: tuple[tuple[str, tuple[Keyframe, ...]], ...]
 
     @classmethod
-    def from_dict(cls, data, *, fps: Fraction, at: int, frames: int):
+    def from_dict(cls, data, *, fps: Fraction, at: int, frames: int, markers=None):
         """Resolve authoring times to segment-local output frames once."""
         try:
             if not isinstance(data, dict) or set(data) - {
@@ -68,9 +69,20 @@ class Animation:
                     }:
                         raise ValueError(f"{name}: unknown keyframe keys")
                     time = key["time"]
-                    if type(time) is not int or time < 0:
-                        raise ValueError(f"{name}: time must be a nonnegative integer")
-                    frame = round(Fraction(time, 1000) * fps) if unit == "ms" else time
+                    if isinstance(time, str):
+                        if base != "timeline":
+                            raise ValueError(
+                                f"{name}: marker references require timeline time_base"
+                            )
+                        frame = resolve_reference(time, fps=fps, markers=markers or {})
+                    else:
+                        if type(time) is not int or time < 0:
+                            raise ValueError(
+                                f"{name}: time must be a nonnegative integer or marker reference"
+                            )
+                        frame = (
+                            round(Fraction(time, 1000) * fps) if unit == "ms" else time
+                        )
                     if base == "timeline":
                         frame -= at
                     if not 0 <= frame < frames:
@@ -141,7 +153,7 @@ class Animation:
         }
 
 
-def load_animation(project: Project, path: str, *, at: int, frames: int):
+def load_animation(project: Project, path: str, *, at: int, frames: int, markers=None):
     if not path:
         return None
     source = project.path(path)
@@ -160,7 +172,13 @@ def load_animation(project: Project, path: str, *, at: int, frames: int):
             return result
 
         data = json.loads(source.read_text(), object_pairs_hook=unique)
-        return Animation.from_dict(data, fps=project.fps, at=at, frames=frames)
+        return Animation.from_dict(
+            data,
+            fps=project.fps,
+            at=at,
+            frames=frames,
+            markers=named_markers(project) if markers is None else markers,
+        )
     except (OSError, UnicodeError, ValueError) as exc:
         raise WorkbenchError(f"Cannot read animation {path}: {exc}") from exc
 

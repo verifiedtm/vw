@@ -62,7 +62,7 @@ TIMELINE_FIELDS = [
     "animation",
     "mask_animation",
 ]
-MARKER_FIELDS = ["time_ms", "kind", "label", "origin", "at_frame"]
+MARKER_FIELDS = ["time_ms", "kind", "label", "origin", "at_frame", "id"]
 DEFAULT_CONFIG = """# Timeline times accept explicit frame indices or legacy integer milliseconds.
 [project]
 width = 1920
