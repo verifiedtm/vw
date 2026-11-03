@@ -239,3 +239,26 @@ def test_zero_frame_marker_and_legacy_marker_file(project):
     assert audio.analyze(project)["manual_markers"] == 1
     with pytest.raises(WorkbenchError, match="cannot mix"):
         audio.marker_seconds(dict(time_ms=0, at_frame=0), project)
+
+
+def test_frame_timing_with_generated_shapes_and_masks(project):
+    configure(project, "24")
+    project.config["shapes"] = dict(
+        panel=dict(
+            type="rectangle",
+            x=0.5,
+            y=0.5,
+            width=2.0,
+            height=2.0,
+            fill="#00ff00",
+        )
+    )
+    edit(project, [frame_row("shape:panel", start=10, end=16, at=2, mask="panel")])
+    shot = timeline.load(project)[0]
+    assert shot.frame_indexed and shot.image and shot.frames == 6
+    for preview in (False, True):
+        result = render(project, preview=preview)
+        colors = decoded_colors(project.path(result["output"]))
+        assert len(colors) == 8
+        assert all(max(c) < 10 for c in colors[:2])
+        assert all(c[1] > 220 for c in colors[2:]), colors

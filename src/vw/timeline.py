@@ -7,6 +7,7 @@ from fractions import Fraction
 
 from .assets import IMAGE_EXTENSIONS
 from .ffmpeg import frame_boundaries, probe, stream_duration
+from .geometry import Shape, load_shapes
 from .project import Project, WorkbenchError, read_csv
 
 
@@ -28,6 +29,9 @@ class Shot:
     transition_frames: int
     opacity: float
     image: bool
+    shape: Shape | None = None
+    mask: Shape | None = None
+    mask_invert: bool = False
     frame_indexed: bool = False
 
     @property
@@ -46,6 +50,7 @@ def seconds(frames: int, fps: Fraction) -> str:
 
 def load(project: Project) -> list[Shot]:
     assets = project.assets()
+    shapes = load_shapes(project.config)
     rows = read_csv(project.path("timeline.csv"), ["asset"])
     shots = []
     metadata = {}
@@ -53,34 +58,47 @@ def load(project: Project) -> list[Shot]:
     for number, row in enumerate(rows, 2):
         try:
             asset = row["asset"]
-            if asset not in assets:
-                raise ValueError(f"unknown asset {asset!r}; run vw ingest first")
-            path = project.media(asset)
-            if path.is_relative_to(project.root / "cache") or path.is_relative_to(
-                project.root / "output"
-            ):
-                raise ValueError(
-                    "timeline sources must live outside generated cache/ and output/ directories"
+            shape = None
+            if asset.startswith("shape:"):
+                name = asset.removeprefix("shape:")
+                if name not in shapes:
+                    raise ValueError(f"unknown shape {name!r}")
+                shape = shapes[name]
+                image = True
+                for field, default in (("fit", "contain"), ("rotation", "0")):
+                    if row.get(field) and row[field] != default:
+                        raise ValueError(f"generated shapes do not support {field}")
+                if row.get("crop") or row.get("effect"):
+                    raise ValueError("generated shapes do not support crop or effect")
+            else:
+                if asset not in assets:
+                    raise ValueError(f"unknown asset {asset!r}; run vw ingest first")
+                path = project.media(asset)
+                if path.is_relative_to(project.root / "cache") or path.is_relative_to(
+                    project.root / "output"
+                ):
+                    raise ValueError(
+                        "timeline sources must live outside generated cache/ and output/ directories"
+                    )
+                if asset not in metadata:
+                    metadata[asset] = probe(path)
+                info = metadata[asset]
+                video = next(
+                    (
+                        s
+                        for s in info["streams"]
+                        if s["codec_type"] == "video"
+                        and not s.get("disposition", {}).get("attached_pic")
+                    ),
+                    None,
                 )
-            if asset not in metadata:
-                metadata[asset] = probe(path)
-            info = metadata[asset]
-            video = next(
-                (
-                    s
-                    for s in info["streams"]
-                    if s["codec_type"] == "video"
-                    and not s.get("disposition", {}).get("attached_pic")
-                ),
-                None,
-            )
-            if video is None:
-                raise ValueError(f"{asset} has no video stream")
-            image = path.suffix.lower() in IMAGE_EXTENSIONS
-            if video.get("color_transfer") in ("smpte2084", "arib-std-b67"):
-                raise ValueError(
-                    "HDR inputs require explicit SDR conversion before ingest"
-                )
+                if video is None:
+                    raise ValueError(f"{asset} has no video stream")
+                image = path.suffix.lower() in IMAGE_EXTENSIONS
+                if video.get("color_transfer") in ("smpte2084", "arib-std-b67"):
+                    raise ValueError(
+                        "HDR inputs require explicit SDR conversion before ingest"
+                    )
             speed = Fraction(row.get("speed") or "1")
             if speed <= 0 or speed > 100:
                 raise ValueError("speed must be greater than 0 and at most 100")
@@ -187,6 +205,14 @@ def load(project: Project) -> list[Shot]:
             opacity = float(row.get("opacity") or 1)
             if not math.isfinite(opacity) or not 0 <= opacity <= 1:
                 raise ValueError("opacity must be between 0 and 1")
+            mask_name = row.get("mask") or ""
+            if mask_name and mask_name not in shapes:
+                raise ValueError(f"unknown mask shape {mask_name!r}")
+            inversion = row.get("mask_invert") or "false"
+            if inversion not in ("true", "false"):
+                raise ValueError("mask_invert must be true or false")
+            if inversion == "true" and not mask_name:
+                raise ValueError("mask_invert requires a mask")
             shots.append(
                 Shot(
                     number,
@@ -205,6 +231,9 @@ def load(project: Project) -> list[Shot]:
                     transition_frames,
                     opacity,
                     image,
+                    shape,
+                    shapes.get(mask_name),
+                    inversion == "true",
                     frame_indexed,
                 )
             )
