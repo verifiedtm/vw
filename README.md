@@ -582,9 +582,8 @@ project geometry invalidates affected preparation. Lossless alpha intermediates
 favor inspectability and correctness over disk space; keep projects short and
 remove old cache entries manually when needed.
 
-
-Frame-addressed video cuts can use bounded seeking when the skipped prefix is
-at least 30 seconds and the GOP estimate predicts fewer total decoded frames.
+Frame-addressed video cuts can use bounded seeking when they start at least
+30 seconds into a source and the GOP estimate predicts fewer total decoded frames.
 Keyframe flags only choose a candidate seek point. Before using it, every
 requested source frame's timestamp, decoded byte size, and SHA-256 checksum must
 match a full-decode reference index. That checksum index is created lazily on the

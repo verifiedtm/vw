@@ -312,3 +312,57 @@ def test_source_change_during_seek_does_not_fall_back(project, monkeypatch):
     monkeypatch.setattr(source, "decode_hashes", change)
     with pytest.raises(WorkbenchError, match="Source changed"):
         source.seek(30, 35)
+
+
+@pytest.mark.parametrize("seek_source", ["cfr"], indirect=True)
+def test_seek_with_animation_masks_upscale_and_explicit_length(
+    project, seek_source, monkeypatch, caplog
+):
+    from vw.project import write_json
+
+    project.config["project"].update(width=320, height=180, fps="24")
+    project.config["shapes"] = dict(
+        round=dict(type="ellipse", x=0.5, y=0.5, width=1, height=1, fill="#ffffff")
+    )
+    write_json(
+        project.path("motion.json"),
+        dict(
+            properties=dict(
+                x=[dict(time=0, value=-0.1), dict(time=7, value=0.1)],
+                opacity=[dict(time=0, value=0.5), dict(time=7, value=1)],
+            )
+        ),
+    )
+    write_csv(
+        project.path("timeline.csv"),
+        TIMELINE_FIELDS,
+        [
+            dict(
+                asset=seek_source,
+                src_in_frame=1007,
+                src_out_frame=1018,
+                at_frame=0,
+                nframes=8,
+                speed="3/2",
+                mask="round",
+                animation="motion.json",
+                mask_animation="motion.json",
+                max_upscale=1,
+                rotation=90,
+                crop="120:80:0:0",
+            )
+        ],
+    )
+    shot = timeline.load(project)[0]
+    caplog.set_level(logging.INFO, logger="vw.performance")
+    for preview in (False, True):
+        actual, _ = normalize.prepare(project, shot, preview)
+        result = pixels(actual)
+        for directory in ("normalized", "animated"):
+            for path in project.path(f"cache/{directory}").glob("*.mov"):
+                path.unlink()
+        with monkeypatch.context() as patch:
+            patch.setattr(frame_index.FrameIndex, "seek", lambda *_: None)
+            reference, _ = normalize.prepare(project, shot, preview)
+        assert pixels(reference) == result
+    assert sum('"event": "seek_verified"' in r.message for r in caplog.records) == 2
