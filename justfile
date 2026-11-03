@@ -21,10 +21,15 @@ build:
 run *args:
     uv run --locked vw "$@"
 
-# Run the test suite.
+# Run unit tests and small real-media smoke tests.
 [group('test')]
 test *args:
     uv run --locked pytest "$@"
+
+# Run all tests, including comprehensive media integration cases.
+[group('test')]
+test-all *args:
+    uv run --locked pytest -m '' "$@"
 
 # Sort imports and format Python files.
 [group('format')]
@@ -75,9 +80,13 @@ deadnix:
 [group('lint')]
 lint: ruff ruff-format-check nixfmt-check just-format-check statix deadnix
 
-# Run all checks.
+# Run lint and the rapid iteration suite.
 [group('test')]
 check: lint test
+
+# Run lint and every media integration test before merging rendering changes.
+[group('test')]
+check-all: lint test-all
 
 # Create and render a complete demo using generated footage and audio.
 [group('run')]

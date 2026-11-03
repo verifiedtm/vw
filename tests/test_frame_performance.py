@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import shutil
+from functools import lru_cache
 
 import pytest
 
@@ -41,6 +43,7 @@ def index(project, asset="red"):
     return frame_index.load(project, path, stream)
 
 
+@pytest.mark.smoke
 def test_persistent_index_and_process_reuse(project, monkeypatch):
     rows(project, spans=((0, 10), (30, 40), (60, 75)))
     original = media_tools.run
@@ -134,49 +137,64 @@ def test_malformed_cache_is_rebuilt(project, bad):
     assert index(project).stamps == first.stamps
 
 
-@pytest.fixture
-def seek_source(project, request):
-    kind = request.param
-    path = project.path(f"sources/seek-{kind}.mkv")
-    filters = []
-    if kind == "vfr":
-        filters = ["-vf", "setpts='if(lt(N,180),N,180+(N-180)*2)'", "-fps_mode", "vfr"]
-    if kind == "offset":
-        filters = ["-vf", "setpts=PTS+5/TB", "-fps_mode", "passthrough"]
-    options = [
-        "-c:v",
-        "libx264",
-        "-g",
-        "60",
-        "-keyint_min",
-        "60",
-        "-sc_threshold",
-        "0",
-        "-bf",
-        "3",
-    ]
-    if kind == "open-gop":
-        options += ["-x264-params", "open-gop=1"]
-    ffmpeg(
-        [
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc2=s=160x90:r=30000/1001:d=36.036",
-            *filters,
-            *options,
-            "-threads",
-            "1",
-            str(path),
+@pytest.fixture(scope="session")
+def seek_media(tmp_path_factory, media):
+    root = tmp_path_factory.mktemp("seek-media")
+
+    @lru_cache(maxsize=4)
+    def create(kind):
+        path = root / f"seek-{kind}.mkv"
+        filters = []
+        if kind == "vfr":
+            filters = [
+                "-vf",
+                "setpts='if(lt(N,180),N,180+(N-180)*2)'",
+                "-fps_mode",
+                "vfr",
+            ]
+        if kind == "offset":
+            filters = ["-vf", "setpts=PTS+5/TB", "-fps_mode", "passthrough"]
+        options = [
+            "-c:v",
+            "libx264",
+            "-g",
+            "60",
+            "-keyint_min",
+            "60",
+            "-sc_threshold",
+            "0",
+            "-bf",
+            "3",
         ]
-    )
+        if kind == "open-gop":
+            options += ["-x264-params", "open-gop=1"]
+        ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=160x90:r=30000/1001:d=36.036",
+                *filters,
+                *options,
+                "-threads",
+                "1",
+                str(path),
+            ]
+        )
+        return path
+
+    return create
+
+
+@pytest.fixture
+def seek_source(project, request, seek_media):
+    source = seek_media(request.param)
+    path = project.path(f"sources/{source.name}")
+    shutil.copy2(source, path)
     ingest(project, path)
-    asset = next(
-        k
-        for k, v in project.assets().items()
-        if v["path"] == f"sources/seek-{kind}.mkv"
+    return next(
+        k for k, v in project.assets().items() if v["path"] == f"sources/{path.name}"
     )
-    return asset
 
 
 def pixels(path):
@@ -366,3 +384,51 @@ def test_seek_with_animation_masks_upscale_and_explicit_length(
             reference, _ = normalize.prepare(project, shot, preview)
         assert pixels(reference) == result
     assert sum('"event": "seek_verified"' in r.message for r in caplog.records) == 2
+
+
+@pytest.mark.smoke
+def test_bounded_seek_smoke(project, monkeypatch, caplog):
+    # A tiny B-frame/GOP source exercises the real verifier and normalization
+    # boundary. Only the performance threshold is lowered; decoder checks stay on.
+    monkeypatch.setattr(frame_index, "MIN_SEEK_PREFIX", 0)
+    path = project.path("sources/smoke.mkv")
+    ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=32x24:r=6:d=4",
+            "-c:v",
+            "libx264",
+            "-g",
+            "6",
+            "-keyint_min",
+            "6",
+            "-sc_threshold",
+            "0",
+            "-bf",
+            "2",
+            "-threads",
+            "1",
+            str(path),
+        ]
+    )
+    ingest(project, path)
+    asset = next(
+        k for k, v in project.assets().items() if v["path"] == "sources/smoke.mkv"
+    )
+    project.config["project"].update(width=32, height=24, fps="6")
+    rows(project, asset, ((20, 23),))
+    shot = timeline.load(project)[0]
+    caplog.set_level(logging.INFO, logger="vw.performance")
+    actual, _ = normalize.prepare(project, shot)
+    selected = pixels(actual)
+    assert len(selected) == 3 * 32 * 24 * 4
+    actual.unlink()
+    with monkeypatch.context() as patch:
+        patch.setattr(frame_index.FrameIndex, "seek", lambda *_: None)
+        expected, _ = normalize.prepare(project, shot)
+    assert pixels(expected) == selected
+    assert any(
+        '"event": "seek_verified"' in record.message for record in caplog.records
+    )

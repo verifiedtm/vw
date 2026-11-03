@@ -15,9 +15,11 @@ media fixtures. `examples/make_demo.py` builds a complete demonstration project.
 - `nix develop`: enter the shell with Python, ffmpeg/ffprobe, uv, and lint tools.
 - `just sync`: install development dependencies from `uv.lock`.
 - `just run --help`: explore the CLI; pass other arguments through `just run`.
-- `just test`: run pytest; use `just test -k cache` to select tests.
+- `just test`: run the rapid unit/smoke suite; use `just test -k cache` to select tests.
+- `just test-all`: include the complete media integration suite.
 - `just format`: format Python, Nix, and the justfile and sort Python imports.
-- `just check`: run all lint, formatting checks, and tests.
+- `just check`: run lint, formatting checks, and the rapid test suite.
+- `just check-all`: include every media integration test before merging rendering changes.
 - `just build`: produce a wheel and source distribution.
 - `just demo /tmp/vw-demo`: generate and render sample media; use a new or empty destination.
 
@@ -33,7 +35,10 @@ path validation and exact rational frame calculations when changing the pipeline
 
 Use pytest with `test_*.py` files and `test_*` functions. Reuse generated fixtures
 and temporary directories instead of committing media. Media integration tests
-require ffmpeg/ffprobe and skip without them; verify those tests actually run.
+require ffmpeg/ffprobe and skip without them; run `just test-all` and verify those
+tests actually run. The default suite keeps two small real-media smoke tests.
+Tests using `media` (including through `project`) are automatically marked
+`integration` unless marked `smoke`; mark other expensive media cases explicitly.
 Test observable results such as decoded pixels, frame counts, cache reuse, CLI
 diagnostics, and preservation of existing files. No coverage percentage is configured.
 

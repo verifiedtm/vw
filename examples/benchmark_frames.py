@@ -165,6 +165,17 @@ def benchmark(args):
         ("long-gop", args.long_seconds, False, 300),
     ]
     results = []
+    report = dict(
+        complete=False,
+        command=sys.argv,
+        platform=platform.platform(),
+        python=sys.version,
+        ffmpeg=run(["ffmpeg", "-version"]),
+        ffprobe=run(["ffprobe", "-version"]),
+        long_seconds=args.long_seconds,
+        results=results,
+    )
+    report_path = root / "results.json"
     for name, seconds, vfr, gop in cases:
         source = sources / f"{name}.mkv"
         ffmpeg(
@@ -267,22 +278,14 @@ def benchmark(args):
                         samples_seconds=[s["seconds"] for s in samples],
                     )
                     results.append(record)
+                    report_path.write_text(json.dumps(report, indent=2) + "\n")
                     records.append(record)
                 print(
                     f"{name:10} {cut:5} {mode:9} "
                     + " ".join(f"{r['phase']}={r['seconds']:.3f}s" for r in records),
                     flush=True,
                 )
-    report = dict(
-        command=sys.argv,
-        platform=platform.platform(),
-        python=sys.version,
-        ffmpeg=run(["ffmpeg", "-version"]),
-        ffprobe=run(["ffprobe", "-version"]),
-        long_seconds=args.long_seconds,
-        results=results,
-    )
-    report_path = root / "results.json"
+    report["complete"] = True
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(report_path)
 

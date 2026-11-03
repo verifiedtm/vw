@@ -570,6 +570,25 @@ the edit identity. JSON whitespace and property ordering do not affect cache key
 Animation uses CPU per-pixel sampling; high-resolution animated layers cost more
 than static layers.
 
+## Test iteration
+
+`just test` (or plain `pytest`) runs unit tests and two small real-media smoke
+checks. The smoke checks exercise persistent frame-index reuse in a fresh process
+and checksum-verified B-frame seeking against independently decoded reference
+pixels. They skip if ffmpeg/ffprobe are unavailable.
+
+`just test-all` runs every test, including the 1,933-frame render, long-GOP/VFR
+seek matrix, animation, masks, and full preview/final comparisons. Use `just
+check-all` for lint plus that full suite before merging rendering changes.
+`just check` runs lint and the quick suite. To focus on the exhaustive frame
+checks, use `just test-all tests/test_frame_performance.py`; `pytest -m integration`
+also selects the extended cases. The standalone benchmark below is never part
+of either test suite.
+
+Tests that depend on the `media` fixture (including indirectly through `project`)
+are automatically classified as integration tests unless marked `smoke`. Tests
+that generate their own media without that fixture must use `@pytest.mark.integration`.
+
 ## Caching and diagnostics
 
 Prepared shots use content-addressed keys including source bytes, the ffmpeg
