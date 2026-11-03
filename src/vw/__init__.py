@@ -1,5 +1,7 @@
-"""The vw Python executable."""
+"""Declarative video editing with plain project files and ffmpeg."""
 
 
 def main() -> None:
-    print("Hello, world!")
+    from .cli import main as cli_main
+
+    cli_main()

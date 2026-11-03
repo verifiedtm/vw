@@ -33,8 +33,11 @@
             # Other tools
             pkgs.just
             pkgs.fd
+            pkgs.ffmpeg
           ];
 
+          # Pillow's manylinux wheel links to the system zlib.
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.zlib ];
           # Keep uv on the interpreter supplied by Nix.
           UV_PYTHON = "${python}/bin/python";
           UV_PYTHON_DOWNLOADS = "never";

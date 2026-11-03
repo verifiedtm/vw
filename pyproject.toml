@@ -1,12 +1,12 @@
 [project]
 name = "vw"
 version = "0.1.0"
-description = "The vw Python executable"
+description = "A declarative video workbench powered by ffmpeg"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE.txt"]
-dependencies = []
+dependencies = ["pillow>=11"]
 
 [project.scripts]
 vw = "vw:main"

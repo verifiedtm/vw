@@ -16,7 +16,7 @@ sync:
 build:
     uv build
 
-# Run the vw executable.
+# Run the video workbench CLI.
 [group('run')]
 run *args:
     uv run --locked vw "$@"
@@ -78,3 +78,8 @@ lint: ruff ruff-format-check nixfmt-check just-format-check statix deadnix
 # Run all checks.
 [group('test')]
 check: lint test
+
+# Create and render a complete demo using generated footage and audio.
+[group('run')]
+demo directory:
+    uv run --locked python examples/make_demo.py "{{ directory }}"
