@@ -55,6 +55,7 @@ TIMELINE_FIELDS = [
     "nframes",
     "mask",
     "mask_invert",
+    "blend_mode",
 ]
 MARKER_FIELDS = ["time_ms", "kind", "label", "origin", "at_frame"]
 DEFAULT_CONFIG = """# Timeline times accept explicit frame indices or legacy integer milliseconds.
@@ -67,6 +68,8 @@ audio_master = ""
 # 0 means end at the last timeline segment.
 duration_frames = 0
 background = "black"
+# Blend in encoded RGB (compatible default) or linear-light BT.709 RGB.
+blend_color_space = "encoded"
 
 [encoding]
 codec = "libx264"
@@ -145,6 +148,11 @@ class Project:
                     raise ValueError(f"{name} must be a TOML table")
             project = cls(root, config)
             settings = config["project"]
+            if settings.get("blend_color_space", "encoded") not in (
+                "encoded",
+                "linear",
+            ):
+                raise ValueError("blend_color_space must be encoded or linear")
             for key in ("width", "height"):
                 value = settings[key]
                 if type(value) is not int or value < 2 or value % 2:

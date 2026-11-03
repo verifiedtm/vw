@@ -108,6 +108,7 @@ Caches are disposable: deleting them causes preparation to run again.
 | project | audio_master | empty means silent export; source clip audio is muted |
 | project | duration_frames | 0 means last segment end; positive value adds a fixed end |
 | project | background | `"black"`; ffmpeg color name or `"0xRRGGBB"` |
+| project | blend_color_space | `"encoded"` (default) or `"linear"`; RGB space for blending and alpha composition |
 | encoding | codec | `"libx264"`; also `"libx265"` if your ffmpeg supports it |
 | encoding | pixel_format | `"yuv420p"`, required for this pipeline |
 | encoding | crf, preset | 18, `"medium"` |
@@ -175,6 +176,7 @@ frame CSV preserves its indices without any millisecond conversion.
 | transition | cut (default), fade, or crossfade |
 | transition_frames | positive output frame count for fade/crossfade |
 | opacity | 0–1, default 1 |
+| blend_mode | normal (default), screen, add, multiply, or difference |
 | mask | optional shape name from project.toml; clips the fitted segment's alpha |
 | mask_invert | `true` inverts mask coverage; `false` (default) keeps the shape interior |
 
@@ -204,6 +206,73 @@ saturation = 0.7   # 0–3
 contrast = 1.05   # 0–3
 brightness = 0.02 # -1–1
 ```
+
+### Blend modes and color space
+
+Set `blend_mode` on any segment, including generated shapes. Each active segment
+blends with the accumulated composition beneath it, ordered by layer and then
+CSV row. The configured background is the bottom, opaque layer.
+
+```csv
+asset,src_in,src_out,at,layer,blend_mode,opacity
+clip-001,0,2000,0,0,normal,1
+clip-002,0,1000,500,1,screen,0.6
+```
+
+By default, blending operates on encoded RGB channel values. To blend and apply
+alpha in linear light instead, set this in the existing `[project]` table:
+
+```toml
+blend_color_space = "linear" # or "encoded" (default)
+```
+
+This setting applies to every segment, including `normal` and transitions, in
+both preview and final renders. It uses the pipeline's BT.709 RGB convention,
+not the sRGB transfer curve. Linear mode decodes each prepared RGB channel `E`
+with `L = E / 4.5` below `E = 0.081`, otherwise
+`L = ((E + 0.099) / 1.099)^(1 / 0.45)`. After composition, it encodes `L` with
+`E = 4.5 * L` below `L = 0.018`, otherwise `E = 1.099 * L^0.45 - 0.099`.
+This interprets prepared SDR RGB as BT.709; it does not add source color-profile
+management. Output remains limited-range BT.709 yuv420p.
+
+For each channel, let `b` be the background and `s` the source, normalized to
+0–1 in the selected space. Blend functions are:
+
+| Mode | Function `F(b, s)` | Effect |
+| --- | --- | --- |
+| normal | `s` | Standard source-over composition |
+| screen | `1 - (1 - b) * (1 - s)` | Lightens; black leaves the background unchanged |
+| add | `min(1, b + s)` | Adds light, saturating before alpha is applied |
+| multiply | `b * s` | Darkens; white leaves the background unchanged |
+| difference | `abs(b - s)` | Shows channel differences; identical colors give black |
+
+The resulting channel is `(1 - a) * b + a * F(b, s)`, where `a` is the prepared
+source alpha: original coverage multiplied by mask coverage, segment opacity,
+and transition fade. Alpha is coverage and never undergoes a transfer function.
+Fully transparent pixels leave the background unchanged even when their hidden
+RGB is nonzero; transparent contain padding adds no rectangle or black halo.
+RGB is straight (unassociated), and the final composition is opaque.
+
+New blend operations use full-range 16-bit RGB intermediates with channel results
+clamped to 0–1. Linear mode keeps the accumulated composition in linear light
+until final encoding. Existing encoded `normal` segments retain the original
+compositing path. Small rounding, scaling, chroma-subsampling, and compression
+differences are expected; preview and final use identical blend math.
+
+For example, fully opaque RGB patches `b = (64, 128, 192)` and
+`s = (224, 160, 96)` give these rounded 8-bit encoded RGB results. Integration
+tests verify decoded output within four channel levels at high encoding quality:
+
+| Mode | encoded | linear |
+| --- | --- | --- |
+| normal | (224, 160, 96) | (224, 160, 96) |
+| screen | (232, 208, 216) | (227, 190, 203) |
+| add | (255, 255, 255) | (235, 207, 217) |
+| multiply | (56, 80, 72) | (54, 76, 69) |
+| difference | (160, 32, 96) | (212, 89, 163) |
+
+Changing only `blend_mode` or `blend_color_space` reuses prepared shots.
+Unsupported mode names and color spaces are rejected before rendering.
 
 ### Shapes and alpha masks
 

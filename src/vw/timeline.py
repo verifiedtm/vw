@@ -33,6 +33,7 @@ class Shot:
     mask: Shape | None = None
     mask_invert: bool = False
     frame_indexed: bool = False
+    blend_mode: str = "normal"
 
     @property
     def end(self):
@@ -205,6 +206,11 @@ def load(project: Project) -> list[Shot]:
             opacity = float(row.get("opacity") or 1)
             if not math.isfinite(opacity) or not 0 <= opacity <= 1:
                 raise ValueError("opacity must be between 0 and 1")
+            blend_mode = row.get("blend_mode") or "normal"
+            if blend_mode not in ("normal", "screen", "add", "multiply", "difference"):
+                raise ValueError(
+                    "blend_mode must be normal, screen, add, multiply, or difference"
+                )
             mask_name = row.get("mask") or ""
             if mask_name and mask_name not in shapes:
                 raise ValueError(f"unknown mask shape {mask_name!r}")
@@ -235,6 +241,7 @@ def load(project: Project) -> list[Shot]:
                     shapes.get(mask_name),
                     inversion == "true",
                     frame_indexed,
+                    blend_mode,
                 )
             )
         except (ValueError, ZeroDivisionError, KeyError, WorkbenchError) as exc:

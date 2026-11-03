@@ -48,6 +48,7 @@ def prepare(
     key["shot"].pop("row")
     key["shot"].pop("at")
     key["shot"].pop("layer")
+    key["shot"].pop("blend_mode")
     hashed = hashlib.sha256(
         json.dumps(key, sort_keys=True, default=str).encode()
     ).hexdigest()
