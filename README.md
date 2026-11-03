@@ -108,6 +108,7 @@ Caches are disposable: deleting them causes preparation to run again.
 | project | fps | `"30"`; also accepts `"30000/1001"` |
 | project | audio_master | empty means silent export; source clip audio is muted |
 | project | duration_frames | 0 means last segment end; positive value adds a fixed end |
+| project | max_upscale | omitted or `"unlimited"` preserves full-canvas fitting; positive factor such as `1.0` caps media enlargement |
 | project | background | `"black"`; ffmpeg color name or `"0xRRGGBB"` |
 | project | blend_color_space | `"encoded"` (default) or `"linear"`; RGB space for blending and alpha composition |
 | encoding | codec | `"libx264"`; also `"libx265"` if your ffmpeg supports it |
@@ -170,6 +171,7 @@ frame CSV preserves its indices without any millisecond conversion.
 | nframes | optional positive exact output frame count for a frame row |
 | layer | integer compositing order, default 0; higher layers are on top |
 | fit | contain (default), cover, or stretch |
+| max_upscale | optional positive factor; blank inherits project default, `unlimited` overrides it |
 | speed | positive ratio, default 1; 2 doubles playback speed |
 | effect | empty, grayscale, vintage, or a named TOML preset |
 | crop | optional `width:height:x:y` in source pixels, after metadata autorotation |
@@ -188,6 +190,29 @@ configured background. `contain` uses transparent padding, showing the backgroun
 or lower layers. PNG/WebP alpha is preserved. Crop, rotation, pixel aspect ratio,
 scale, speed, frame rate, and treatment are resolved in shot preparation; final
 composition uses prepared canvas dimensions without rescaling shots.
+
+Set `max_upscale=1` to retain native display size when fitting would enlarge a
+source, or `1.5` to permit up to 150%. For example, a 320×240 clip capped at 1 in
+a 1280×720 project occupies a centered 320×240 rectangle. Padding is transparent,
+so lower layers or the project background remain visible. Larger footage still
+downscales normally. The cap uses source dimensions after metadata autorotation,
+crop, explicit rotation, and sample-aspect-ratio correction. It adds no sharpening
+or color treatment.
+
+With `contain` and `cover`, the cap limits the uniform fit scale. Capped `cover`
+crops overflow and pads any dimension that cannot fill the canvas. With `stretch`,
+each axis is capped independently. Raster sizes round down to stay within the cap
+(with a minimum of one pixel). Previews map the final rectangle into the preview
+canvas, allowing at most one pixel of edge rounding, instead of fitting the native
+source again. Generated shapes remain canvas-based and ignore the project cap;
+a shot-level cap on a shape is rejected.
+
+Both `timeline validate --json` and render manifests include a `presentation`
+object keyed by CSV row number. Capped shots report corrected
+`source_display_size`, `max_upscale`, whether fitting was `limited`, and a `final`
+layout with `scaled_size`, `visible_size`, `position`, and `crop_offset`. Render
+manifests also include the actual output's `target` layout (preview or final).
+Unlimited shots report `max_upscale: null` and retain the existing fitting path.
 
 A crossfade fades the incoming shot's alpha over an underlying shot. Arrange an
 overlap at least as long as `transition_frames`; validation rejects missing

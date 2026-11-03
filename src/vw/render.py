@@ -5,6 +5,7 @@ import json
 
 from .ffmpeg import digest, export, version
 from .normalize import dimensions, prepare
+from .presentation import placement
 from .project import Project, WorkbenchError, write_json
 from .timeline import load, seconds, total_frames, validate
 
@@ -167,6 +168,7 @@ def render(project: Project, preview: bool = False) -> dict:
         "height": h,
         "tool": tool,
         "sources": hashes,
+        "presentation": {str(s.row): placement(project, s, (w, h)) for s in shots},
         "geometry_masks": {str(s.row): s.mask.identity() for s in shots if s.mask},
         "animations": {
             str(s.row): {

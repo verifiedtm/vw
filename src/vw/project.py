@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
+from .presentation import upscale_limit
+
 
 class WorkbenchError(Exception):
     """An actionable project or media error."""
@@ -42,6 +44,7 @@ TIMELINE_FIELDS = [
     "at",
     "layer",
     "fit",
+    "max_upscale",
     "speed",
     "effect",
     "crop",
@@ -72,6 +75,8 @@ duration_frames = 0
 background = "black"
 # Blend in encoded RGB (compatible default) or linear-light BT.709 RGB.
 blend_color_space = "encoded"
+# Optional presentation scale cap; omitted means unlimited.
+# max_upscale = 1.0
 
 [encoding]
 codec = "libx264"
@@ -150,6 +155,7 @@ class Project:
                     raise ValueError(f"{name} must be a TOML table")
             project = cls(root, config)
             settings = config["project"]
+            upscale_limit(settings.get("max_upscale"))
             if settings.get("blend_color_space", "encoded") not in (
                 "encoded",
                 "linear",
