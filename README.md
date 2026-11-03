@@ -695,8 +695,11 @@ interpretation. Automatic HDR tone mapping, advanced color grading, source audio
 mixing, animated/styled text, arbitrary transition plugins, and a graphical editor
 are outside the current implementation.
 
-`just check` runs Python/Nix/justfile lint and integration tests using generated
-media. Tests check decoded pixels, layering/alpha, transitions, speed, exact frame
-counts, fractional frame rates, cache behavior, file preservation, audio/review
+`just check` runs Python/Nix/justfile lint, formatting checks, and the quick test
+suite. `just check-all` includes every media integration test using generated
+media. GitHub Actions runs `just check-all` in the locked Nix development shell
+on pull requests and pushes to `master`; formatting failures can be fixed locally
+with `just format`. Tests check decoded pixels, layering/alpha, transitions, speed,
+exact frame counts, fractional frame rates, cache behavior, file preservation, audio/review
 artifacts, and CLI diagnostics. Media tests require ffmpeg/ffprobe and skip when
 those tools are missing. `just build` produces a wheel and source distribution.
