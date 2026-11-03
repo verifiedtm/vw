@@ -120,3 +120,44 @@ def stream_duration(stream: dict, metadata: dict) -> float:
     ):
         return float(int(stream["nb_frames"]) / Fraction(stream["avg_frame_rate"]))
     return duration(metadata)
+
+
+def frame_boundaries(path: Path, stream: dict) -> list[Fraction]:
+    """Decoded presentation-order boundaries, including the end of the last frame.
+
+    Use integer timestamps and the stream time base, never decimal seconds or
+    average FPS (which cannot describe variable-rate footage).
+    """
+    data = json.loads(
+        run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                str(stream["index"]),
+                "-show_frames",
+                "-show_entries",
+                "frame=best_effort_timestamp,duration,pkt_duration",
+                "-of",
+                "json",
+                str(path),
+            ]
+        )
+    )["frames"]
+    tick = Fraction(stream["time_base"])
+    try:
+        stamps = [int(frame["best_effort_timestamp"]) * tick for frame in data]
+        if not stamps or any(b <= a for a, b in zip(stamps, stamps[1:], strict=False)):
+            raise ValueError("missing or non-increasing presentation timestamps")
+        last = data[-1]
+        duration = int(last.get("duration") or last.get("pkt_duration") or 0) * tick
+        if duration <= 0 and stream.get("duration_ts") is not None:
+            duration = (
+                int(stream.get("start_pts", 0)) + int(stream["duration_ts"])
+            ) * tick - stamps[-1]
+        if duration <= 0:
+            raise ValueError("last frame has no exact duration")
+        return [*stamps, stamps[-1] + duration]
+    except (KeyError, ValueError) as exc:
+        raise WorkbenchError(f"Cannot index source frames in {path}: {exc}") from exc

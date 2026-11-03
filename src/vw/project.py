@@ -49,9 +49,13 @@ TIMELINE_FIELDS = [
     "transition",
     "transition_frames",
     "opacity",
+    "src_in_frame",
+    "src_out_frame",
+    "at_frame",
+    "nframes",
 ]
-MARKER_FIELDS = ["time_ms", "kind", "label", "origin"]
-DEFAULT_CONFIG = """# All CSV times are integer milliseconds, rounded once to the nearest output frame.
+MARKER_FIELDS = ["time_ms", "kind", "label", "origin", "at_frame"]
+DEFAULT_CONFIG = """# Timeline times accept explicit frame indices or legacy integer milliseconds.
 [project]
 width = 1920
 height = 1080

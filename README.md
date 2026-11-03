@@ -120,21 +120,51 @@ the same edit decisions at both resolutions.
 
 ### timeline.csv
 
-Only `asset,src_in,src_out,at` are required. Omitted optional columns or empty
-values use defaults. Unknown annotation columns are ignored by rendering.
+Use frame-addressed timing for precise edits:
 
-**All four time fields are integer milliseconds.** Source bounds are a half-open
-interval `[src_in, src_out)`. Output position and speed-adjusted duration are each
-converted once to the nearest target frame using exact rational arithmetic
-(ties round to even). Segment ends are calculated from those integer frames;
-rounding never accumulates across the timeline. At 30 fps, 1000 ms is frame 30.
-Use rational speeds such as `3/2` when exact ratios matter.
+```csv
+asset,src_in_frame,src_out_frame,at_frame,nframes
+clip-001,0,836,0,836
+clip-002,0,1091,842,1091
+```
+
+At 24 fps this leaves a six-frame blackout at `[836,842)`, with the next shot
+starting at output frame 842. Set `project.duration_frames = 1933` for a fixed
+1,933-frame edit. Source ranges must exist in the actual footage.
+
+Frame rows require `asset,src_in_frame,src_out_frame,at_frame`. All indices are
+zero-based and ranges are half-open. Source indices count **decoded frames in
+presentation order**, independently of project FPS and codec keyframes. Video
+trims decode from the beginning to select the exact source range. For VFR footage,
+original presentation timestamps determine cadence and duration; the exclusive
+end uses the next frame's timestamp, or the final frame's declared duration at
+EOF. Missing/non-increasing timestamps or an unknown final duration are rejected.
+This indexing requires a full source-frame probe when loading a frame-based edit.
+
+`at_frame` is always an **output project frame**. Optional positive `nframes` fixes
+the exact output length after speed/cadence conversion: excess frames are trimmed,
+and short ranges hold their last frame. Without it, the source timestamp duration
+is divided by `speed`, multiplied by exact rational project FPS, and rounded once
+(ties to even). For still images, source ranges use project frames instead.
+Preview and final use the same source selection and output boundaries.
+
+Existing millisecond rows require `asset,src_in,src_out,at` and retain their timing
+behavior. Source bounds are `[src_in,src_out)`; output position and speed-adjusted
+duration are rounded independently to project frames, with exact rational
+arithmetic. Use rational speeds such as `3/2`. A row cannot populate both timing
+schemas, even if their values appear equivalent. Different rows may use different
+schemas; blank timing columns are ignored. Omitted optional columns use defaults,
+and unknown annotation columns are ignored by rendering. Reading and writing a
+frame CSV preserves its indices without any millisecond conversion.
 
 | Field | Meaning |
 | --- | --- |
 | asset | ID in assets.csv |
 | src_in, src_out | source trim bounds; for images, the interval controls duration |
-| at | output start; nonnegative |
+| at | output start in milliseconds; nonnegative |
+| src_in_frame, src_out_frame | decoded source-frame range (project frames for stills) |
+| at_frame | nonnegative output start frame |
+| nframes | optional positive exact output frame count for a frame row |
 | layer | integer compositing order, default 0; higher layers are on top |
 | fit | contain (default), cover, or stretch |
 | speed | positive ratio, default 1; 2 doubles playback speed |
@@ -174,7 +204,11 @@ brightness = 0.02 # -1–1
 
 ### markers.csv and analysis
 
-Columns: `time_ms,kind,label,origin`. `vw marker` adds a row with `origin=manual`
+Columns: `time_ms,at_frame,kind,label,origin`. Each row uses either integer
+`time_ms` or integer output `at_frame`; populating both is rejected. Legacy marker
+files remain supported. Use `vw marker 842 "Dancer entrance" --frames` to store
+a frame position directly, with no millisecond conversion. Waveform drawing and
+sorting use exact rational positions at project FPS. `vw marker` adds a row with `origin=manual`
 and preserves other rows and annotation columns. Kinds can describe beats, lyrics,
 drops, transitions, or any editor-defined event.
 
