@@ -34,7 +34,14 @@ def parser() -> argparse.ArgumentParser:
         "asset", nargs="?", help="asset ID or relative path; defaults to audio_master"
     )
     marker = commands.add_parser("marker", help="add an authoritative manual marker")
-    marker.add_argument("time_ms", type=int)
+    marker.add_argument(
+        "time_ms", type=int, help="milliseconds, or output frames with --frames"
+    )
+    marker.add_argument(
+        "--frames",
+        action="store_true",
+        help="interpret position as an output frame index",
+    )
     marker.add_argument("label")
     marker.add_argument("--kind", default="cut")
     sheet = commands.add_parser(
@@ -85,7 +92,11 @@ def main(argv: list[str] | None = None) -> None:
                     result = audio.analyze(project, args.asset)
                 case "marker":
                     result = audio.add_marker(
-                        project, args.time_ms, args.kind, args.label
+                        project,
+                        None if args.frames else args.time_ms,
+                        args.kind,
+                        args.label,
+                        at_frame=args.time_ms if args.frames else None,
                     )
                 case "contact-sheet":
                     result = contact.contact_sheet(project, args.asset, args.count)

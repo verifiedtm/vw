@@ -9,7 +9,7 @@ from .geometry import rasterize
 from .project import Project, WorkbenchError
 from .timeline import Shot
 
-PIPELINE_VERSION = 2
+PIPELINE_VERSION = 3
 
 
 def dimensions(project: Project, preview: bool) -> tuple[int, int]:
@@ -65,8 +65,13 @@ def prepare(
                 return destination, True
         except (WorkbenchError, StopIteration, ValueError):
             pass
+    trim = (
+        f"trim=start_frame={shot.src_in}:end_frame={shot.src_out}"
+        if shot.frame_indexed and not shot.image
+        else f"trim=duration={float((shot.src_out - shot.src_in) / (project.fps if shot.frame_indexed else 1000)):.12f}"
+    )
     filters = [
-        f"trim=duration={float((shot.src_out - shot.src_in) / 1000):.9f}",
+        trim,
         f"setpts=(PTS-STARTPTS)/({shot.speed})",
     ]
     if shot.crop:
@@ -127,8 +132,10 @@ def prepare(
         "setsar=1",
     ]
     inputs = ["-loop", "1"] if shot.image else []
-    source_start = 0 if shot.shape else shot.src_in
-    inputs += ["-ss", f"{source_start / 1000:.9f}", "-i", str(source)]
+    if not shot.frame_indexed:
+        source_start = 0 if shot.shape else shot.src_in
+        inputs += ["-ss", f"{source_start / 1000:.9f}"]
+    inputs += ["-i", str(source)]
     if shot.mask:
         mask_path = rasterize(project, shot.mask, (w, h))
         inputs += ["-loop", "1", "-i", str(mask_path)]

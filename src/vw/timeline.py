@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 from .assets import IMAGE_EXTENSIONS
-from .ffmpeg import probe, stream_duration
+from .ffmpeg import frame_boundaries, probe, stream_duration
 from .geometry import Shape, load_shapes
 from .project import Project, WorkbenchError, read_csv
 
@@ -32,6 +32,7 @@ class Shot:
     shape: Shape | None = None
     mask: Shape | None = None
     mask_invert: bool = False
+    frame_indexed: bool = False
 
     @property
     def end(self):
@@ -50,9 +51,10 @@ def seconds(frames: int, fps: Fraction) -> str:
 def load(project: Project) -> list[Shot]:
     assets = project.assets()
     shapes = load_shapes(project.config)
-    rows = read_csv(project.path("timeline.csv"), ["asset", "src_in", "src_out", "at"])
+    rows = read_csv(project.path("timeline.csv"), ["asset"])
     shots = []
     metadata = {}
+    boundaries = {}
     for number, row in enumerate(rows, 2):
         try:
             asset = row["asset"]
@@ -97,16 +99,62 @@ def load(project: Project) -> list[Shot]:
                     raise ValueError(
                         "HDR inputs require explicit SDR conversion before ingest"
                     )
-            start, end, at_ms = (int(row[key]) for key in ("src_in", "src_out", "at"))
-            if start < 0 or end <= start or at_ms < 0:
-                raise ValueError("require 0 <= src_in < src_out and at >= 0")
-            if not image and end > round(stream_duration(video, info) * 1000) + 1:
-                raise ValueError(f"src_out {end} exceeds source duration")
             speed = Fraction(row.get("speed") or "1")
             if speed <= 0 or speed > 100:
                 raise ValueError("speed must be greater than 0 and at most 100")
-            at = frame_at(at_ms, project.fps)
-            frames = round(Fraction(end - start, 1000) / speed * project.fps)
+            frame_indexed = any(
+                row.get(k)
+                for k in ("src_in_frame", "src_out_frame", "at_frame", "nframes")
+            )
+            if frame_indexed:
+                if any(row.get(k) for k in ("src_in", "src_out", "at")):
+                    raise ValueError(
+                        "cannot mix millisecond and frame timing in one row"
+                    )
+                if (
+                    not row.get("at_frame")
+                    or not row.get("src_in_frame")
+                    or not row.get("src_out_frame")
+                ):
+                    raise ValueError(
+                        "frame timing requires src_in_frame, src_out_frame, at_frame"
+                    )
+                start, end, at = (
+                    int(row[k]) for k in ("src_in_frame", "src_out_frame", "at_frame")
+                )
+                if start < 0 or end <= start or at < 0:
+                    raise ValueError(
+                        "require 0 <= src_in_frame < src_out_frame and at_frame >= 0"
+                    )
+                if image:
+                    # Stills have no source cadence; their range uses project frames.
+                    length = Fraction(end - start, 1) / project.fps
+                else:
+                    if asset not in boundaries:
+                        boundaries[asset] = frame_boundaries(path, video)
+                    stamps = boundaries[asset]
+                    if end >= len(stamps):
+                        raise ValueError(
+                            f"src_out_frame {end} exceeds source frame count {len(stamps) - 1}"
+                        )
+                    length = stamps[end] - stamps[start]
+                frames = (
+                    int(row["nframes"])
+                    if row.get("nframes")
+                    else round(length / speed * project.fps)
+                )
+            else:
+                if not all(row.get(k) for k in ("src_in", "src_out", "at")):
+                    raise ValueError("millisecond timing requires src_in, src_out, at")
+                start, end, at_ms = (
+                    int(row[key]) for key in ("src_in", "src_out", "at")
+                )
+                if start < 0 or end <= start or at_ms < 0:
+                    raise ValueError("require 0 <= src_in < src_out and at >= 0")
+                if not image and end > round(stream_duration(video, info) * 1000) + 1:
+                    raise ValueError(f"src_out {end} exceeds source duration")
+                at = frame_at(at_ms, project.fps)
+                frames = round(Fraction(end - start, 1000) / speed * project.fps)
             if frames < 1:
                 raise ValueError("segment is shorter than one output frame")
             fit = row.get("fit") or "contain"
@@ -186,6 +234,7 @@ def load(project: Project) -> list[Shot]:
                     shape,
                     shapes.get(mask_name),
                     inversion == "true",
+                    frame_indexed,
                 )
             )
         except (ValueError, ZeroDivisionError, KeyError, WorkbenchError) as exc:

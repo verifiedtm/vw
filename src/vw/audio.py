@@ -4,6 +4,7 @@ import math
 import subprocess
 import sys
 from array import array
+from fractions import Fraction
 from statistics import median, pstdev
 
 from PIL import Image, ImageDraw
@@ -74,6 +75,24 @@ def envelope(path):
     return rms, peaks
 
 
+def marker_seconds(row: dict, project: Project) -> Fraction:
+    """Read one unambiguous marker without quantizing an output-frame index."""
+    if row.get("at_frame") not in (None, "") and row.get("time_ms") not in (None, ""):
+        raise WorkbenchError("markers.csv: cannot mix time_ms and at_frame")
+    try:
+        if row.get("at_frame") not in (None, ""):
+            value = int(row["at_frame"])
+            result = Fraction(value, 1) / project.fps
+        else:
+            value = int(row.get("time_ms", ""))
+            result = Fraction(value, 1000)
+        if value < 0:
+            raise ValueError("negative timestamp")
+        return result
+    except ValueError as exc:
+        raise WorkbenchError(f"Invalid marker {row}: {exc}") from exc
+
+
 def analyze(project: Project, audio: str | None = None) -> dict:
     audio = audio or project.config["project"].get("audio_master")
     if not audio:
@@ -81,16 +100,10 @@ def analyze(project: Project, audio: str | None = None) -> dict:
     path = project.media(audio)
     rms, peaks = envelope(path)
     length_ms = len(rms) * HOP * 1000 // RATE
-    markers = read_csv(
-        project.path("markers.csv"), ["time_ms", "kind", "label", "origin"]
-    )
+    markers = read_csv(project.path("markers.csv"), ["kind", "label", "origin"])
     for row in markers:
-        try:
-            timestamp = int(row["time_ms"])
-            if timestamp < 0 or timestamp > length_ms:
-                raise ValueError("timestamp outside soundtrack")
-        except ValueError as exc:
-            raise WorkbenchError(f"Invalid marker {row}: {exc}") from exc
+        if marker_seconds(row, project) > Fraction(length_ms, 1000):
+            raise WorkbenchError(f"Invalid marker {row}: timestamp outside soundtrack")
     key = digest(path)[:16]
     folder = project.generated("cache/waveforms")
     folder.mkdir(parents=True, exist_ok=True)
@@ -118,7 +131,7 @@ def analyze(project: Project, audio: str | None = None) -> dict:
         draw.text((min(x, 1510), 310), f"{length_ms * i / 10000:.2f}s", fill="white")
     waveform = folder / f"{key}.png"
     for row in markers:
-        x = 20 + int(row["time_ms"]) * 1560 / max(length_ms, 1)
+        x = 20 + marker_seconds(row, project) * 1000 * 1560 / max(length_ms, 1)
         draw.line((x, 40, x, 295), fill="#ffd166", width=2)
         draw.text((min(x + 3, 1400), 35), row["label"][:24], fill="#ffd166")
     image.save(waveform)
@@ -205,22 +218,29 @@ def analyze(project: Project, audio: str | None = None) -> dict:
     }
 
 
-def add_marker(project: Project, time_ms: int, kind: str, label: str) -> dict:
-    if time_ms < 0:
-        raise WorkbenchError("Marker time must be nonnegative milliseconds")
+def add_marker(
+    project: Project,
+    time_ms: int | None,
+    kind: str,
+    label: str,
+    *,
+    at_frame: int | None = None,
+) -> dict:
+    if (time_ms is None) == (at_frame is None):
+        raise WorkbenchError("Specify exactly one of time_ms or at_frame")
+    if (time_ms if time_ms is not None else at_frame) < 0:
+        raise WorkbenchError("Marker time must be nonnegative")
     path = project.path("markers.csv")
-    rows = read_csv(path, MARKER_FIELDS)
+    rows = read_csv(path, ["kind", "label", "origin"])
     fields = list(dict.fromkeys(MARKER_FIELDS + [k for row in rows for k in row]))
     row = dict.fromkeys(fields, "") | {
-        "time_ms": time_ms,
+        "time_ms": time_ms if time_ms is not None else "",
+        "at_frame": at_frame if at_frame is not None else "",
         "kind": kind,
         "label": label,
         "origin": "manual",
     }
     rows.append(row)
-    try:
-        rows.sort(key=lambda r: int(r["time_ms"]))
-    except ValueError as exc:
-        raise WorkbenchError("markers.csv contains a noninteger time_ms") from exc
+    rows.sort(key=lambda r: marker_seconds(r, project))
     write_csv(path, fields, rows)
     return row
