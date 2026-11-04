@@ -141,9 +141,10 @@ def test_malformed_cache_is_rebuilt(project, bad):
 def seek_media(tmp_path_factory, media):
     root = tmp_path_factory.mktemp("seek-media")
 
-    @lru_cache(maxsize=4)
+    @lru_cache(maxsize=8)
     def create(kind):
-        path = root / f"seek-{kind}.mkv"
+        extension = {"mp4-offset": "mp4", "ts-vfr-offset": "ts"}.get(kind, "mkv")
+        path = root / f"seek-{kind}.{extension}"
         filters = []
         if kind == "vfr":
             filters = [
@@ -154,6 +155,15 @@ def seek_media(tmp_path_factory, media):
             ]
         if kind == "offset":
             filters = ["-vf", "setpts=PTS+5/TB", "-fps_mode", "passthrough"]
+        if kind == "mp4-offset":
+            filters = ["-vf", "setpts=PTS+0.125/TB", "-fps_mode", "passthrough"]
+        if kind == "ts-vfr-offset":
+            filters = [
+                "-vf",
+                "setpts='if(lt(N,180),N,180+(N-180)*2)+5/TB'",
+                "-fps_mode",
+                "vfr",
+            ]
         options = [
             "-c:v",
             "libx264",
@@ -168,12 +178,27 @@ def seek_media(tmp_path_factory, media):
         ]
         if kind == "open-gop":
             options += ["-x264-params", "open-gop=1"]
+        if kind == "audio-first":
+            options += [
+                "-map",
+                "1:a:0",
+                "-map",
+                "0:v:0",
+                "-c:a",
+                "pcm_s16le",
+                "-shortest",
+            ]
         ffmpeg(
             [
                 "-f",
                 "lavfi",
                 "-i",
                 "testsrc2=s=160x90:r=30000/1001:d=36.036",
+                *(
+                    ["-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono"]
+                    if kind == "audio-first"
+                    else []
+                ),
                 *filters,
                 *options,
                 "-threads",
@@ -222,7 +247,17 @@ def pixels(path):
 
 
 @pytest.mark.parametrize(
-    "seek_source", ["cfr", "vfr", "offset", "open-gop"], indirect=True
+    "seek_source",
+    [
+        "cfr",
+        "vfr",
+        "offset",
+        "open-gop",
+        "mp4-offset",
+        "ts-vfr-offset",
+        "audio-first",
+    ],
+    indirect=True,
 )
 @pytest.mark.parametrize("fps", ["24", "30000/1001"])
 def test_bounded_seek_matches_reference_pixels(
