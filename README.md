@@ -611,6 +611,16 @@ normalization each perform a bounded decode. Short/early cuts, unsupported hash
 paths, and mismatches use the exact decode-from-start path. Millisecond cuts keep
 their existing seek behavior.
 
+Use `vw render --preview --seek-mode exact` or
+`vw render --final --seek-mode exact` to skip bounded seeks and their reference
+checksum verification. The default, `--seek-mode auto`, retains verified seeking.
+Both modes produce frame-exact output; `exact` decodes from the start and trims
+by source frame number. It still performs source hashing, frame indexing, and
+validation, and does not change millisecond cuts. Preview and final use the same
+policy, including animated shots. The manifest records `seek_mode`, and diagnostics
+report the selected policy even when prepared shots are cached. Switching modes
+reuses valid normalized shots and does not change the editorial `edit_id`.
+
 This trades a slower first useful seek for faster repeated extraction from long
 sources; it does not promise a faster first render. There is no approximate-seek
 mode. Normalized shots keep their existing cache keys and reuse behavior.
@@ -681,7 +691,8 @@ from vw.render import render
 
 project = Project.load("my-edit")
 diagnostics = validate(project)
-manifest = render(project, preview=True)
+manifest = render(project, preview=True, seek_mode="exact")
+# Direct shot preparation also accepts seek_mode="auto" or "exact".
 ```
 
 The public modules are `project`, `assets`, `audio`, `timeline`, `animation`, `markers`, `geometry`, `normalize`,

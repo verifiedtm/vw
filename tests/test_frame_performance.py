@@ -225,9 +225,7 @@ def pixels(path):
     "seek_source", ["cfr", "vfr", "offset", "open-gop"], indirect=True
 )
 @pytest.mark.parametrize("fps", ["24", "30000/1001"])
-def test_bounded_seek_matches_reference_pixels(
-    project, seek_source, fps, caplog, monkeypatch
-):
+def test_bounded_seek_matches_reference_pixels(project, seek_source, fps, caplog):
     project.config["project"]["fps"] = fps
     rows(project, seek_source, ((1, 4), (903, 911), (1007, 1018), (1074, 1080)))
     shots = timeline.load(project)
@@ -238,9 +236,7 @@ def test_bounded_seek_matches_reference_pixels(
         actual = pixels(path)
         assert len(actual) == shot.frames * 160 * 90 * 4
         path.unlink()
-        with monkeypatch.context() as patch:
-            patch.setattr(frame_index.FrameIndex, "seek", lambda *_: None)
-            reference, hit = normalize.prepare(project, shot)
+        reference, hit = normalize.prepare(project, shot, seek_mode="exact")
         assert not hit and pixels(reference) == actual
     events = [json.loads(record.message) for record in caplog.records]
     assert sum(e["event"] == "seek_verified" for e in events) == 3
@@ -268,8 +264,7 @@ def test_mismatched_seek_falls_back_with_diagnostics(project, monkeypatch, caplo
     actual, _ = normalize.prepare(project, shot)
     result = pixels(actual)
     actual.unlink()
-    monkeypatch.setattr(frame_index.FrameIndex, "seek", lambda *_: None)
-    expected, _ = normalize.prepare(project, shot)
+    expected, _ = normalize.prepare(project, shot, seek_mode="exact")
     assert result == pixels(expected)
 
 
@@ -334,7 +329,7 @@ def test_source_change_during_seek_does_not_fall_back(project, monkeypatch):
 
 @pytest.mark.parametrize("seek_source", ["cfr"], indirect=True)
 def test_seek_with_animation_masks_upscale_and_explicit_length(
-    project, seek_source, monkeypatch, caplog
+    project, seek_source, caplog
 ):
     from vw.project import write_json
 
@@ -379,9 +374,7 @@ def test_seek_with_animation_masks_upscale_and_explicit_length(
         for directory in ("normalized", "animated"):
             for path in project.path(f"cache/{directory}").glob("*.mov"):
                 path.unlink()
-        with monkeypatch.context() as patch:
-            patch.setattr(frame_index.FrameIndex, "seek", lambda *_: None)
-            reference, _ = normalize.prepare(project, shot, preview)
+        reference, _ = normalize.prepare(project, shot, preview, seek_mode="exact")
         assert pixels(reference) == result
     assert sum('"event": "seek_verified"' in r.message for r in caplog.records) == 2
 
@@ -425,10 +418,76 @@ def test_bounded_seek_smoke(project, monkeypatch, caplog):
     selected = pixels(actual)
     assert len(selected) == 3 * 32 * 24 * 4
     actual.unlink()
-    with monkeypatch.context() as patch:
-        patch.setattr(frame_index.FrameIndex, "seek", lambda *_: None)
-        expected, _ = normalize.prepare(project, shot)
+    expected, _ = normalize.prepare(project, shot, seek_mode="exact")
     assert pixels(expected) == selected
     assert any(
         '"event": "seek_verified"' in record.message for record in caplog.records
     )
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("seek_source", ["cfr"], indirect=True)
+def test_render_seek_modes(
+    project, seek_source, preview, fallback, monkeypatch, caplog
+):
+    from vw.render import render
+
+    project.config["project"].update(fps="24", audio_master="")
+    rows(project, seek_source, ((1007, 1018),))
+    caplog.set_level(logging.INFO, logger="vw.performance")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("exact mode attempted seek verification")
+
+    # Start with no checksums or normalized shots, including in the frame index.
+    with monkeypatch.context() as patch:
+        patch.setattr(frame_index.FrameIndex, "seek", forbidden)
+        patch.setattr(frame_index.FrameIndex, "reference_hashes", forbidden)
+        patch.setattr(frame_index.FrameIndex, "decode_hashes", forbidden)
+        exact = render(project, preview, seek_mode="exact")
+    expected = pixels(project.path(exact["output"]))
+    assert exact["seek_mode"] == "exact" and exact["cache_hits"] == 0
+    assert index(project, seek_source).hashes is None
+    events = [json.loads(record.message) for record in caplog.records]
+    assert any(
+        e["event"] == "render_policy" and e["seek_mode"] == "exact" for e in events
+    )
+    assert any(e["event"] == "seek_disabled" for e in events)
+    assert not any(
+        e["event"] in ("reference_hash_decode", "seek_verify_decode") for e in events
+    )
+
+    for path in project.path("cache/normalized").glob("*.mov"):
+        path.unlink()
+    caplog.clear()
+    if fallback:
+        original = frame_index.FrameIndex.decode_hashes
+
+        def mismatch(self, inputs, *args):
+            return [] if inputs else original(self, inputs, *args)
+
+        monkeypatch.setattr(frame_index.FrameIndex, "decode_hashes", mismatch)
+    auto = render(project, preview)  # default remains auto
+    assert auto["seek_mode"] == "auto" and auto["cache_hits"] == 0
+    assert pixels(project.path(auto["output"])) == expected
+    assert auto["duration_frames"] == exact["duration_frames"]
+    assert auto["fps"] == exact["fps"]
+    assert auto["edit_id"] == exact["edit_id"]
+    assert auto["prepared"] == exact["prepared"]
+    event = "seek_fallback" if fallback else "seek_verified"
+    assert any(
+        json.loads(record.message)["event"] == event for record in caplog.records
+    )
+    caplog.clear()
+    with monkeypatch.context() as patch:
+        patch.setattr(frame_index.FrameIndex, "seek", forbidden)
+        patch.setattr(frame_index.FrameIndex, "reference_hashes", forbidden)
+        assert render(project, preview, seek_mode="exact")["cache_hits"] == 1
+    assert any(
+        (event := json.loads(record.message)).get("status") == "hit"
+        and event.get("seek_mode") == "exact"
+        for record in caplog.records
+    )
+    saved = json.loads(project.path(auto["output"]).with_suffix(".json").read_text())
+    assert saved["seek_mode"] == "exact"

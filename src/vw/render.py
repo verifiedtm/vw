@@ -3,8 +3,9 @@
 import hashlib
 import json
 
+from . import metrics
 from .ffmpeg import digest, export, version
-from .normalize import dimensions, prepare
+from .normalize import dimensions, prepare, validate_seek_mode
 from .presentation import placement
 from .project import Project, WorkbenchError, write_json
 from .timeline import load, seconds, total_frames, validate
@@ -47,7 +48,10 @@ def blend_filters(shot, i: int, frames: int, fps, linear: bool) -> list[str]:
     ]
 
 
-def render(project: Project, preview: bool = False) -> dict:
+def render(project: Project, preview: bool = False, *, seek_mode: str = "auto") -> dict:
+    """Render an export using auto verified seeks or exact decode-from-start."""
+    validate_seek_mode(seek_mode)
+    metrics.emit("render_policy", seek_mode=seek_mode, preview=preview)
     diagnostics = validate(project)
     shots = sorted(load(project), key=lambda s: (s.layer, s.row))
     frames = total_frames(project, shots)
@@ -66,7 +70,14 @@ def render(project: Project, preview: bool = False) -> dict:
         for s in shots
     }
     prepared = [
-        prepare(project, s, preview, identity=hashes[s.asset], tool_version=tool)
+        prepare(
+            project,
+            s,
+            preview,
+            seek_mode=seek_mode,
+            identity=hashes[s.asset],
+            tool_version=tool,
+        )
         for s in shots
     ]
     duration = seconds(frames, project.fps)
@@ -162,6 +173,7 @@ def render(project: Project, preview: bool = False) -> dict:
     manifest = {
         "output": str(destination.relative_to(project.root)),
         "preview": preview,
+        "seek_mode": seek_mode,
         "duration_frames": frames,
         "fps": str(project.fps),
         "width": w,
@@ -188,9 +200,14 @@ def render(project: Project, preview: bool = False) -> dict:
         "cache_hits": sum(hit for _, hit in prepared),
         "warnings": diagnostics["warnings"],
     }
+    # Execution policy is recorded above but does not change the edit itself.
     manifest["edit_id"] = hashlib.sha256(
         json.dumps(
-            {k: v for k, v in manifest.items() if k not in ("cache_hits", "warnings")},
+            {
+                k: v
+                for k, v in manifest.items()
+                if k not in ("cache_hits", "warnings", "seek_mode")
+            },
             sort_keys=True,
         ).encode()
     ).hexdigest()
