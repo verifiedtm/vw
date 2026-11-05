@@ -61,6 +61,12 @@ def parser() -> argparse.ArgumentParser:
     mode = output.add_mutually_exclusive_group(required=True)
     mode.add_argument("--preview", action="store_true")
     mode.add_argument("--final", action="store_true")
+    output.add_argument(
+        "--seek-mode",
+        choices=("auto", "exact"),
+        default="auto",
+        help="frame-addressed cuts: verified seeking (auto) or decode from start (exact)",
+    )
     inspection = commands.add_parser("inspect", help="decode and diagnose an output")
     inspection.add_argument("media")
     inspection.add_argument(
@@ -111,7 +117,9 @@ def main(argv: list[str] | None = None) -> None:
                         else timeline.visualize(project)
                     )
                 case "render":
-                    result = render.render(project, args.preview)
+                    result = render.render(
+                        project, args.preview, seek_mode=args.seek_mode
+                    )
                 case "inspect":
                     result = inspect.inspect(
                         project,

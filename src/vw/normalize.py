@@ -23,17 +23,30 @@ def dimensions(project: Project, preview: bool) -> tuple[int, int]:
     )
 
 
+def validate_seek_mode(seek_mode: str) -> None:
+    if seek_mode not in ("auto", "exact"):
+        raise WorkbenchError("seek_mode must be auto or exact")
+
+
 def prepare(
     project: Project,
     shot: Shot,
     preview: bool = False,
     *,
+    seek_mode: str = "auto",
     identity: str | None = None,
     tool_version: str | None = None,
 ):
+    """Prepare exact frames; seek_mode only controls verified-seek optimization."""
+    validate_seek_mode(seek_mode)
     if shot.animation or shot.mask_animation:
         return prepare_animated(
-            project, shot, preview, identity=identity, tool_version=tool_version
+            project,
+            shot,
+            preview,
+            seek_mode=seek_mode,
+            identity=identity,
+            tool_version=tool_version,
         )
     w, h = dimensions(project, preview)
     source = (
@@ -41,6 +54,7 @@ def prepare(
         if shot.shape
         else project.media(shot.asset)
     )
+    # Both seek policies produce identical frames and share normalized artifacts.
     key = {
         "pipeline": PIPELINE_VERSION,
         "source": identity or (shot.shape.identity() if shot.shape else digest(source)),
@@ -73,7 +87,12 @@ def prepare(
                 and stream["height"] == h
                 and int(stream.get("nb_frames", 0)) == shot.frames
             ):
-                metrics.emit("normalized_cache", status="hit", source=str(source))
+                metrics.emit(
+                    "normalized_cache",
+                    status="hit",
+                    source=str(source),
+                    seek_mode=seek_mode,
+                )
                 return destination, True
         except (WorkbenchError, StopIteration, ValueError):
             pass
@@ -82,7 +101,9 @@ def prepare(
         if shot.frame_indexed and not shot.image
         else f"trim=duration={float((shot.src_out - shot.src_in) / (project.fps if shot.frame_indexed else 1000)):.12f}"
     )
-    metrics.emit("normalized_cache", status="miss", source=str(source))
+    metrics.emit(
+        "normalized_cache", status="miss", source=str(source), seek_mode=seek_mode
+    )
     seek_inputs = []
     source_index = None
     if shot.frame_indexed and not shot.image:
@@ -93,9 +114,12 @@ def prepare(
             and not s.get("disposition", {}).get("attached_pic")
         )
         source_index = frame_index.load(project, source, video)
-        plan = source_index.seek(shot.src_in, shot.src_out)
-        if plan:
-            seek_inputs, trim = plan
+        if seek_mode == "auto":
+            plan = source_index.seek(shot.src_in, shot.src_out)
+            if plan:
+                seek_inputs, trim = plan
+        else:
+            metrics.emit("seek_disabled", seek_mode=seek_mode, source=str(source))
     filters = [
         trim,
         f"setpts=(PTS-STARTPTS)/({shot.speed})",
@@ -228,7 +252,7 @@ def prepare(
     return destination, False
 
 
-def prepare_animated(project, shot, preview, *, identity, tool_version):
+def prepare_animated(project, shot, preview, *, seek_mode, identity, tool_version):
     # Animated masks need the unmasked source. All animation changes reuse this
     # static normalization artifact, including source decoding, crop, and fit.
     base = replace(
@@ -239,7 +263,12 @@ def prepare_animated(project, shot, preview, *, identity, tool_version):
         mask_invert=False if shot.mask_animation else shot.mask_invert,
     )
     source, _ = prepare(
-        project, base, preview, identity=identity, tool_version=tool_version
+        project,
+        base,
+        preview,
+        seek_mode=seek_mode,
+        identity=identity,
+        tool_version=tool_version,
     )
     key = {
         "animation_pipeline": 1,
