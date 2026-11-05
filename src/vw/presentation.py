@@ -1,4 +1,18 @@
-"""Resolve capped media placement in final-canvas coordinates."""
+"""Resolve capped media placement in final-canvas coordinates.
+
+Display dimensions incorporate metadata autorotation, crop, explicit rotation
+and sample aspect ratio before applying max_upscale. Contain/cover cap a uniform
+scale; stretch caps axes independently. Raster dimensions floor to avoid exceeding
+the requested cap (minimum one pixel). Overflow is cropped and missing coverage
+is transparent, so capped cover can leave padding.
+
+placement resolves integer geometry on the final canvas, then maps that rectangle
+to preview dimensions instead of refitting native media. Preview edge rounding
+can differ by a pixel. Generated shapes are canvas-based and bypass media caps.
+Reports expose source_display_size, limited, and final/target layouts containing
+scaled_size, visible_size, position and crop_offset; uncapped shots report a null
+max_upscale and use the original fitting path.
+"""
 
 import math
 from fractions import Fraction

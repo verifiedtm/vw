@@ -1,4 +1,22 @@
-"""Compose prepared shots; editorial choices live exclusively in project files."""
+"""Compose prepared shots; editorial choices live exclusively in project files.
+
+Sort shots by (layer, CSV row) and composite over an opaque configured background.
+Exports are constant-frame-rate, square-pixel, limited-range BT.709 yuv420p. HDR
+sources must be converted explicitly before this stage. Untagged SDR relies on
+ffmpeg source interpretation; linear blending is not source-profile management.
+
+Encoded normal layers retain the overlay path. Other blend operations use
+full-range 16-bit straight RGB; linear mode decodes BT.709 transfer before all
+blending/alpha composition and re-encodes afterward. Alpha is coverage and never
+undergoes a transfer function. See transfer_filter and blend_filters for kernels.
+
+Each export's JSON manifest records source/config/timeline/marker hashes, resolved
+positions, geometry, animation, output settings, prepared paths and cache hits.
+Execution seek policy is recorded but excluded from edit_id, as are cache hits
+and warnings. Encoding reproducibility requires the same tools/platform; editorial
+choices introduce no timestamps or random seeds. Export publication preserves a
+previous successful output on failure.
+"""
 
 import hashlib
 import json
@@ -24,6 +42,12 @@ def transfer_filter(*, encode: bool = False) -> str:
 
 def blend_filters(shot, i: int, frames: int, fps, linear: bool) -> list[str]:
     """Blend straight RGB, then apply prepared alpha as coverage exactly once.
+
+    For background b, source s and prepared alpha a, output is
+    (1-a)*b + a*F(b,s). F is s (normal), 1-(1-b)*(1-s) (screen), min(1,b+s)
+    (add), b*s (multiply), or abs(b-s) (difference). Kernels below use 16-bit
+    channel units. Coverage already includes masks, opacity and transitions;
+    fully transparent pixels must preserve the background regardless of RGB.
 
     Padding with transparent frames gives every framesync input the full output
     time span, including gaps and frames before/after an arbitrarily placed shot.

@@ -1,4 +1,16 @@
-"""Named, explicitly authored timeline positions and exact reference resolution."""
+"""Named, explicitly authored timeline positions and exact reference resolution.
+
+Read either integer milliseconds or output-frame positions as rational seconds,
+without pre-quantizing frame-authored markers. Only origin=manual rows enter the
+reference map; labels are independent of stable case-sensitive IDs.
+
+References resolve a marker plus an optional signed integer ms or output-frame
+offset. Add the offset to exact rational time before a single nearest-even round
+to project frames. Timeline loading and timeline-timed animation share this rule;
+animation subtracts the resolved shot start afterward. Source trims never resolve
+marker references. See ID_PATTERN/REFERENCE for grammar and USAGE.md for CSV
+and command examples.
+"""
 
 import re
 from fractions import Fraction

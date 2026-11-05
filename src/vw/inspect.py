@@ -1,4 +1,12 @@
-"""Decode outputs and report measurable problems without judging editorial intent."""
+"""Decode outputs and report measurable problems without judging editorial intent.
+
+Render manifests provide expected preview/final geometry, FPS, frame count, color
+metadata and audio presence. Changed project/timeline/marker hashes mark renders
+stale. Without a manifest, compare current project settings and the caller's
+preview flag. Detection also reports near-black frames, silence below -50 dBFS
+for at least 250 ms, and high audio peaks as warnings, not editorial failures.
+Review contact sheets sample the actual encoded output, not source thumbnails.
+"""
 
 import json
 import re

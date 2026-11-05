@@ -1,4 +1,28 @@
-"""Manual, project-independent clip libraries and exact timeline references."""
+"""Manual, project-independent clip libraries and exact timeline references.
+
+Version 1 manifests contain a clips array. load checks schema and unique stable
+IDs without opening media; validate aggregates per-record schema and media errors.
+add preserves unknown manifest/record fields. source_path anchors relative paths
+to the resolved manifest directory, independent of working directory or project.
+
+_range converts half-open integer ms or frame intervals to decoded frame indices.
+Milliseconds start at the first decoded video PTS; bisect_left selects frame
+starts in [in,out). Duration and EOF checks use exact presentation boundaries,
+never avg_frame_rate. Preview and import share this selection.
+
+Previews use the existing frame-index cache and exact frame-number extraction.
+Their atomic JPEG cache key includes source identity, selected records, range,
+size, tool versions and preview format version. Both caches live beside the
+manifest under cache/ and may be discarded.
+
+import_clips validates selections before rewriting project CSVs, appends in caller
+order, and rounds each decoded duration to project frames once. Same-path assets
+are reused; new external media opts into Project.asset_path reference resolution.
+The two CSV writes roll back on ordinary write failures; they are not a multi-file
+crash transaction. Catalogue provenance columns are annotations, so rendering
+requires only the source media, not the original manifest. See USAGE.md for
+manifest examples and the CLI workflow.
+"""
 
 import csv
 import hashlib

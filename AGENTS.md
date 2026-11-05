@@ -6,7 +6,8 @@
 Application code lives in `src/vw/`: `cli.py` exposes commands, `project.py`
 handles configuration and safe file operations, and the remaining modules cover
 asset ingestion, audio analysis, timeline validation, shot preparation, rendering,
-and inspection. Keep CLI and Python callers on the same implementation.
+and inspection. `catalogue.py` manages project-independent clip libraries.
+Keep CLI and Python callers on the same implementation.
 `tests/test_workbench.py` contains integration tests; `tests/conftest.py` generates
 media fixtures. `examples/make_demo.py` builds a complete demonstration project.
 
@@ -42,6 +43,37 @@ Tests using `media` (including through `project`) are automatically marked
 Test observable results such as decoded pixels, frame counts, cache reuse, CLI
 diagnostics, and preservation of existing files. No coverage percentage is configured.
 
+CI runs `just check-all` in the locked Nix development shell on pull requests and
+pushes to `master`. The standalone performance benchmark is separate from pytest:
+
+```sh
+uv run python examples/benchmark_frames.py /tmp/vw-frame-benchmark
+```
+
+Use a new directory. See the script's docstring and `--help` for measurement
+phases and larger-source options. Compare decoded work and cache behavior as well
+as elapsed time; OS page caches are not cleared.
+
+## Pipeline Invariants
+
+Source-frame indices address decoded presentation order. Use actual timestamps
+and `Fraction` for duration/cadence conversion, rounding only at output boundaries.
+Keep `auto` verified seeking and `exact` decode-from-start equivalent in decoded
+frame selection. Keyframe flags are seek hints; preserve checksum verification
+and the exact fallback. Cache keys must account for every input that changes pixels.
+
+`Project.path` confines ordinary paths to the project root. Only explicit asset
+`source_mode=reference` rows may resolve external media; do not generalize that
+exception to animations, arbitrary command paths or generated outputs. Preserve
+original media, CSV annotations and the previous successful export on failure.
+
+Static preparation, animation and composition are separate stages. Preserve alpha
+through prepared shots, apply coverage once, and keep preview placement consistent
+with final-canvas geometry. Details belong with their implementations:
+`timeline.py` (timing), `frame_index.py` (seeking), `normalize.py` (shot preparation),
+`animation.py` (keyframes), `presentation.py` (fit), `geometry.py` (rasterization),
+and `render.py` (composition). Diagnostic event contracts live in `metrics.py`.
+
 ## Commit & Pull Request Guidelines
 
 Existing history uses short, plain subjects (`initial setup`, `first cut`), with
@@ -51,7 +83,19 @@ run. Include representative frames or diagnostic output for rendering changes.
 
 ## Documentation Policy
 
-Keep documentation useful to current users and developers. Do not accumulate
-design artifacts or historical implementation narratives in `docs/`; put relevant
-design rationale in code comments and Git history. Update `README.md` when CLI
-behavior or project-file formats change.
+`README.md` is a brief overview of what vw is and what it is for, with pointers
+to `USAGE.md` for setup and usage. Keep it short and welcoming. Requirements,
+installation steps, commands, demos and technical examples belong in
+`USAGE.md`, not the README.
+
+The README is not an exhaustive command reference, project-file schema, pipeline
+specification, troubleshooting log or implementation history. Put operational
+recipes, file-authoring rules and troubleshooting in `USAGE.md`; put
+contributor workflow and repository rules in this file. Keep algorithm details,
+cache contracts and design rationale beside the implementation in Python module
+docstrings or local comments.
+
+When behavior changes, update the owning reference and keep its examples
+working. Prefer links to existing examples and code over duplicated tables of
+implementation constants. Do not accumulate design artifacts or historical
+implementation narratives in `docs/`.

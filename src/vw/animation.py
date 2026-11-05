@@ -1,4 +1,24 @@
-"""Validated, output-frame keyframes shared by media, geometry, and masks."""
+"""Validated, output-frame keyframes shared by media, geometry, and masks.
+
+Animation.from_dict canonicalizes property tracks into sorted immutable keys.
+LIMITS defines bounds and neutral defaults. Millisecond times round once at exact
+project FPS; timeline times then subtract the resolved segment start. Marker
+references are allowed only in timeline time_base, independent of time_unit.
+Keys must resolve to distinct visible output frames, including after rounding.
+
+Interpolation belongs to the outgoing interval: hold retains a key's value until
+the next key; linear interpolates numeric values. Endpoints hold outside the key
+range, and rotation does not wrap by shortest path. value and expression implement
+the same evaluator for Python and ffmpeg callers.
+
+Layer/mask animation uses the fitted canvas after static source preparation.
+Treatment applies in BT.709 YUV before the affine transform. The transform samples
+onto the fixed output canvas with premultiplied bilinear sampling, rotating about
+the canvas center without refitting a rotated bounding box. Applied masks move
+with layer animation; mask_animation transforms only mask alpha. Resolved keys,
+not JSON whitespace or ordering, determine animation identity. See normalize.py
+for static/animated cache boundaries and USAGE.md for authoring examples.
+"""
 
 import json
 import math

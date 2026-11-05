@@ -1,9 +1,18 @@
 """Reproducible frame-index/trim benchmark; writes JSON, never clears user caches.
 
 Run in a new directory: uv run python examples/benchmark_frames.py /tmp/vw-bench
-Each measurement runs in a fresh interpreter, with OS caches left uncontrolled.
-Reference mode uses the original full probe and decode-from-start paths; only
-performance instrumentation is shared. See --help for the larger-source option.
+Use --long-seconds 600 --repeats 5 for larger sources and more warm samples.
+The harness generates CFR/VFR and B-frame/long-GOP media and tests early, late and
+scattered cuts. Reference mode uses full probe/decode-from-start paths with the
+same instrumentation. Measurements run in fresh interpreters; OS caches remain
+uncontrolled, and source generation/ingestion are outside measured intervals.
+
+cold-load starts without metadata; warm-load retains it. first-prepare has warm
+metadata but cold checksums/shots. warm-prepare removes normalized shots only.
+Preview/final each force shot preparation, followed by a repeated cached render.
+results.json includes per-phase events, wall time, probe/decode/hash work, cache
+behavior, platform and complete tool versions. Compare phases separately rather
+than treating a cold first render as the steady-state cost. See --help for options.
 """
 
 import argparse

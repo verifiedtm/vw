@@ -2,9 +2,21 @@
 
 Keyframe flags are seek hints, never proof of a decoder random-access point.
 Before using a seek, compare every requested decoded frame's timestamp and SHA256
-against a full decode. The normalization pass uses identical decoder/seek options.
-This deliberately trades a cold full decode and two bounded warm decodes for a
-small, codec-independent correctness boundary. No approximate seek is accepted.
+against a full-decode reference. Verification and normalization each perform a
+bounded decode. This trades a cold full decode and two bounded warm decodes for a
+codec-independent correctness boundary. No approximate seek is accepted.
+
+Persistent index identity includes source bytes, selected stream/time base, index
+version and full ffmpeg/ffprobe builds. Malformed entries rebuild atomically. Stat
+fingerprints bound the in-process metadata/index caches; fresh processes rehash
+source bytes. Source identity is checked again during preparation.
+
+Useful bounded seeking requires a start beyond MIN_SEEK_PREFIX and an estimated
+decode saving. Reference hashes are lazy and survive output-setting changes.
+Early/short cuts, unsupported hashing and checksum mismatches fall back to exact
+decode-from-start. Failure reasons are cached; frame-index cache removal permits
+a fresh attempt. normalize.py enforces the caller's auto/exact policy, which does
+not change normalized cache identity. Diagnostic event contracts live in metrics.py.
 """
 
 import hashlib

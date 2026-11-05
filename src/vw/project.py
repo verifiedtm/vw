@@ -1,4 +1,17 @@
-"""Project files and shared, safe filesystem operations."""
+"""Project files and shared, safe filesystem operations.
+
+Project.path resolves symlinks before enforcing root confinement. External source
+access is deliberately limited to asset_path rows with source_mode=reference and
+an absolute path; ordinary command paths and animation paths remain confined.
+Project.generated additionally rejects symlink traversal and only accepts cache/
+and output/. Do not use external asset resolution for generated destinations.
+
+ASSET_FIELDS, TIMELINE_FIELDS and MARKER_FIELDS define the CSV columns written by
+initialization. Readers accept older headers containing their required subset.
+Callers that rewrite inventories or timelines must preserve annotation columns.
+DEFAULT_CONFIG documents configuration defaults; Project.load validates them.
+Text/JSON/CSV writers publish via sibling temporary files and atomic replacement.
+"""
 
 import csv
 import json

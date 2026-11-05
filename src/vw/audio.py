@@ -1,4 +1,12 @@
-"""Waveform and conservative onset suggestions; manual markers remain authoritative."""
+"""Waveform and conservative onset suggestions; manual markers remain authoritative.
+
+Stream mono float PCM into HOP-sample RMS/peak windows at RATE (currently 20 ms).
+Keep envelope memory bounded by windows rather than audio samples; duration rounds
+up to the final window. Waveforms use linear amplitude and overlay manual markers.
+Suggestions identify heuristic onsets, quiet passages and intensity changes, not
+a reliable musical beat grid. Analysis writes separate suggestion files and never
+automatically promotes rows to manual markers or changes timeline decisions.
+"""
 
 import math
 import subprocess

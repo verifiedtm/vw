@@ -1,4 +1,16 @@
-"""Declarative canvas geometry, rasterized independently of timeline placement."""
+"""Declarative canvas geometry, rasterized independently of timeline placement.
+
+Shape x/y are center coordinates relative to canvas width/height; dimensions and
+inside stroke width use the shorter canvas side. This preserves circles across
+aspect ratios. Rasterization clips overflow and uses SUPERSAMPLE-scale rendering
+with Lanczos downsampling, producing fractional alpha at boundaries. Preview and
+final are rasterized independently, so small edge differences are expected.
+
+Shape.identity includes canonical properties, generator version, Pillow version
+and supersampling policy. Raster cache keys additionally include target size.
+Masks consume alpha, including stroke/opacity/antialiasing, not RGB fill color.
+See normalize.py for when mask coverage is applied and USAGE.md for TOML syntax.
+"""
 
 import hashlib
 import json

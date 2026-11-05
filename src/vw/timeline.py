@@ -1,4 +1,24 @@
-"""Parse declarative edit decisions using exact rational time arithmetic."""
+"""Parse declarative edit decisions using exact rational time arithmetic.
+
+A Shot uses source-frame indices when frame_indexed, otherwise milliseconds.
+Its at, frames, end and transition_frames always use output project frames.
+Source-frame ranges are half-open decoded presentation-order indices, unrelated
+to project FPS or codec keyframes. VFR durations come from frame-index boundaries,
+including the last frame's declared duration at EOF. Stills and generated shapes
+instead interpret source-frame ranges at project FPS.
+
+For frame rows, absent nframes is round(source_duration / speed * project.fps).
+Explicit nframes controls trimming or last-frame holding during preparation.
+Millisecond rows round their output start and speed-adjusted duration separately.
+Use Fraction until these boundaries; Python round supplies nearest-even rounding.
+Marker resolution uses the same rule before shot-local animation keys are loaded.
+
+load validates source bounds, treatments, masks and underlying crossfade coverage.
+validate adds gaps, soundtrack warnings, named markers, presentation geometry and
+resolved positions. Position records expose exclusive end_frame and both local
+and absolute timeline frames for animation keys. Authoring examples live in
+USAGE.md; optional input columns are enumerated in project.TIMELINE_FIELDS.
+"""
 
 import math
 import re

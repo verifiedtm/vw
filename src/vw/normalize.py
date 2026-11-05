@@ -1,4 +1,23 @@
-"""Prepare immutable, content-addressed shots with one explicit SDR pipeline."""
+"""Prepare immutable, content-addressed shots with one explicit SDR pipeline.
+
+Static preparation resolves source selection, speed/cadence, crop, rotation,
+pixel aspect, canvas fit and treatment into lossless RGBA intermediates. Masks
+multiply fitted alpha; inversion uses 1-coverage. Static opacity and fades also
+multiply coverage. Animation runs afterward on the prepared canvas; render.py
+composites it without fitting shots again. PNG/WebP source alpha is preserved.
+
+Static cache keys include source bytes, ffmpeg version, pipeline version, target
+size/FPS, relevant treatment/geometry/mask settings and resolved shot properties,
+but omit row number, output position, layer and blend mode. Animated preparation
+has a separate cache keyed by static identity and resolved layer/mask curves.
+Editing keys can reuse static normalization; moving a timeline-timed animation
+can change its curves. Animated affine sampling is CPU work per output pixel.
+
+Auto and exact seeking share cache keys because both must select identical frames.
+Exact skips seek verification but still hashes and indexes sources. Preparation
+holds the final frame or trims to the requested output count, and checks source
+integrity before publishing. Authoring syntax lives in USAGE.md.
+"""
 
 import hashlib
 import json
