@@ -67,16 +67,129 @@ configuration. Run it again after adding markers to include them on the waveform
 Analysis suggestions are separate CSV files; nothing automatically changes an
 edit or promotes a suggestion to a manual marker.
 
+## Reusable clip catalogue
+
+A catalogue is a standalone, human-editable JSON file. It indexes excerpts without
+copying or modifying source media and can be used across projects. Catalogue
+commands need no `project.toml` except when importing into an existing project.
+For example, with footage at `/media/dance/take-01.mp4`:
+
+```sh
+uv run vw catalogue /media/dance/clips.json init
+uv run vw catalogue /media/dance/clips.json add turn-left take-01.mp4 25 50 \
+  --time-unit frames --tag dance --tag turn --motion left \
+  --action "Arm sweep" --camera-movement "locked" --framing "medium" \
+  --entry "Centered, arm down" --exit "Left edge, arm raised" --notes "Clean exit"
+uv run vw catalogue /media/dance/clips.json add reach-up take-01.mp4 2000 2800 \
+  --time-unit ms --tag dance --motion up --action "Reach overhead"
+uv run vw catalogue /media/dance/clips.json list --tag dance --motion left --json
+uv run vw catalogue /media/dance/clips.json list --source take-01.mp4 --query sweep
+uv run vw catalogue /media/dance/clips.json show turn-left reach-up --json
+uv run vw catalogue /media/dance/clips.json validate --json
+uv run vw catalogue /media/dance/clips.json preview turn-left reach-up
+uv run vw --project my-edit catalogue /media/dance/clips.json import \
+  turn-left reach-up --at-frame 0 --json
+uv run vw --project my-edit timeline validate --json
+uv run vw --project my-edit timeline visualize
+uv run vw --project my-edit render --preview
+uv run vw --project my-edit inspect output/preview.mp4 --preview --json
+uv run vw --project my-edit render --final
+```
+
+Choose source positions that exist in your footage. Relative `source` paths,
+including `list --source`, resolve against the **manifest's directory**, regardless
+of the working directory. Absolute local filesystem paths are also supported;
+URIs and remote sources are not. IDs are explicit and stable across edits; they
+use letters, digits, dots, underscores and hyphens, starting with a letter or digit.
+Use a text editor to revise metadata or remove records. Existing files and duplicate
+IDs are never silently replaced by `init` or `add`.
+
+The manifest schema is:
+
+```json
+{
+  "version": 1,
+  "clips": [
+    {
+      "id": "turn-left",
+      "source": "take-01.mp4",
+      "time_unit": "frames",
+      "in": 25,
+      "out": 50,
+      "tags": ["dance", "turn"],
+      "motion": "left",
+      "action": "Arm sweep",
+      "camera_movement": "locked",
+      "framing": "medium",
+      "entry": "Centered, arm down",
+      "exit": "Left edge, arm raised",
+      "notes": "Clean exit"
+    }
+  ]
+}
+```
+
+Required fields are `id`, `source`, `time_unit`, `in`, and `out`. Timing uses
+nonnegative integers and half-open `[in,out)` ranges. `frames` counts decoded
+source frames in presentation order. `ms` counts milliseconds from the first
+decoded video frame; only frames whose starting timestamps fall within the range
+are selected. Selection uses actual decoded timestamps, including for VFR footage,
+and rejects intervals containing no frames or extending beyond EOF. Catalogue
+sources must be moving video; still images and audio-only files are excluded.
+
+All metadata fields are optional. `motion` accepts `left`, `right`, `up`, `down`,
+`toward`, `away`, `static`, or `mixed`; other descriptions are free text. Repeated
+`--tag` filters require every supplied tag, and different filters combine with AND.
+`--query` searches IDs, tags, action, notes, camera movement, framing, entry and exit
+case-insensitively. Listing and searching do not probe media. `validate` checks all
+records and returns per-record errors; invalid data exits with status 1, while
+command/file errors exit with status 2.
+
+`preview` writes a labeled JPEG with the first and last included frame of each
+selected clip. Omit IDs to preview the entire catalogue (maximum 200 clips per
+sheet). Previews live beside the manifest under `cache/catalogue/`; decoded source
+indexes use `cache/frame-index/`. Cache identity includes source content, trim,
+metadata, preview settings and tool versions. Cold indexing can scan whole files;
+repeated previews reuse cached results. These caches are disposable.
+
+`import` appends selections in the supplied order, starting at the required
+`--at-frame` output frame. It emits frame-addressed rows with exact source trims
+and explicit `nframes`, rounding each decoded source duration to project frames
+once, using rational arithmetic. Millisecond excerpts become decoded frame ranges;
+no average-FPS conversion is used. Existing rows, gaps and annotation columns are
+preserved. Choose placement deliberately: import does not rearrange existing shots
+or resolve overlaps. Run `timeline validate` afterward.
+
+Sources already registered at the same resolved path reuse their asset IDs. New
+internal sources use project-relative paths; new external sources get explicit
+`source_mode=reference` asset rows with absolute paths. Import neither copies nor
+re-encodes media. The resulting project needs the source files but does not need
+the catalogue manifest; `catalogue_id` and `catalogue_manifest` on timeline rows
+are provenance annotations. References are machine-specific if media paths differ.
+For a self-contained project, copy or ingest footage into the project first, then
+catalogue those files. Keep all referenced files immutable during indexing and
+rendering. Automatic tagging, gesture matching and a GUI are outside this feature.
+
+Python callers use the same implementation in `vw.catalogue`: `initialize`, `add`,
+`load`, `search`, `select`, `validate`, `preview`, and `import_clips`. Import requires
+a loaded `Project` and an explicit `at_frame` keyword argument.
+
 ## Project files
 
-All media references resolve relative to the video project root. Absolute paths
-and paths escaping the root are rejected, except import inputs, which can refer
-to outside media. Imported external files receive a content suffix to avoid name
-collisions. Ingestion preserves existing IDs, descriptions, provenance, and custom
-CSV annotation columns. It stores complete ffprobe stream metadata and SHA-256
-hashes alongside dimensions, duration, codecs, color metadata, and audio details.
-Re-ingest to refresh the inventory after replacing sources. Rendering independently
-hashes and probes referenced sources so it cannot reuse a shot for changed media.
+Ordinary media references resolve relative to the video project root. Absolute
+paths and paths escaping the root are rejected unless an asset explicitly has
+`source_mode=reference`; that mode requires an absolute local source path and is
+used by catalogue imports. Other project paths, including animations and generated
+outputs, retain their existing root restrictions. References read the original
+media in place: keep it available and immutable while working on the edit.
+
+`vw ingest` continues to copy external files into `sources/`, with a content suffix
+to avoid name collisions. Ingestion preserves existing IDs, descriptions,
+provenance, and custom CSV annotation columns. It stores complete ffprobe stream
+metadata and SHA-256 hashes alongside dimensions, duration, codecs, color metadata,
+and audio details. Re-ingest to refresh the inventory after replacing sources.
+Rendering independently hashes and probes referenced sources so it cannot reuse a
+shot for changed media.
 
 ```text
 my-edit/
@@ -705,7 +818,7 @@ manifest = render(project, preview=True, seek_mode="exact")
 # Direct shot preparation also accepts seek_mode="auto" or "exact".
 ```
 
-The public modules are `project`, `assets`, `audio`, `timeline`, `animation`, `markers`, `geometry`, `normalize`,
+The public modules are `project`, `assets`, `catalogue`, `audio`, `timeline`, `animation`, `markers`, `geometry`, `normalize`,
 `render`, `contact`, `inspect`, and `ffmpeg`. Errors use `WorkbenchError`.
 There is no database, daemon, web service, MoviePy dependency, or agent adapter.
 

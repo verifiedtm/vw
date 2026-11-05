@@ -4,11 +4,45 @@ These notes supplement the repository's `AGENTS.md` (which covers development) a
 
 ## Agent setup
 
-- The project root contains `project.toml`, `assets.csv`, `timeline.csv`, `markers.csv`, and a `sources/` directory. All paths referenced in the project must resolve *inside* the project root. Absolute and escaping paths are rejected; a source symlink outside the root also resolves outside and is rejected. Import external files with `vw ingest`, or copy media into `sources/` before inventorying. Hardlinks are suitable only when the backing files are immutable and stable for the entire render.
+- The project root contains `project.toml`, `assets.csv`, `timeline.csv`, `markers.csv`, and a `sources/` directory. Ordinary project paths must resolve *inside* the project root. Absolute and escaping paths are rejected; a source symlink outside the root also resolves outside and is rejected. The explicit exception is an `assets.csv` row with `source_mode=reference`, whose `path` must be an absolute local source path; catalogue imports create these references without copying media. This exception does not apply to animation files, generated outputs, or arbitrary paths passed to commands. Use `vw ingest` or copy media into `sources/` for a self-contained project. Hardlinks are suitable only when the backing files are immutable and stable for the entire render.
 - From the repo, run `uv run vw --project /path/to/project timeline validate --json`, then `timeline visualize`, `render --preview`, `inspect output/preview.mp4 --json`, and finally `render --final`. Put `--json` before or after the subcommand if desired. `just test` is the quick suite, `just test-all` runs extended media tests.
 - `audio_master` names an asset ID in `assets.csv` or a project-relative audio path. Video source audio is muted; the configured master is trimmed or padded to the declared edit duration.
 - When running in an ephemeral agent environment, acquire a versioned source snapshot or release artifact rather than depending on a mutable checkout. Verify its checksum where provided, and record the exact revision plus ffmpeg/ffprobe versions alongside diagnostics. A GitHub Actions artifact may be retrievable via a connected GitHub integration even when a direct private release download is inaccessible.
 - Treat imported media as immutable during indexing, validation, and rendering. Managed attachment mounts and other externally controlled paths may be replaced or remounted; hardlinks to them do not provide an independent copy. Use `vw ingest` or copy file bytes into `sources/`, then inventory and validate. If `vw` reports that source content changed during indexing, stabilize the files before retrying; do not bypass the integrity check.
+
+
+## Reusable clip catalogue
+
+- Use a standalone JSON catalogue to record reusable gestures, camera moves and entry/exit compositions across projects. It has `version: 1` and a `clips` array. Each record requires a stable `id`, local filesystem `source`, `time_unit` (`frames` or `ms`), and integer `in`/`out`. Relative sources resolve against the manifest directory, never the working directory. IDs start with a letter or digit and contain only letters, digits, dots, underscores and hyphens.
+- Record manual `action`, `camera_movement`, `framing`, `entry`, `exit`, `notes`, and a `tags` array. `motion` is one of left/right/up/down/toward/away/static/mixed. Describe entry and exit composition explicitly when matching gestures. No automatic analysis or compatibility ranking is performed.
+- Source intervals are half-open. `frames` uses decoded presentation-order indices; `ms` is relative to the first decoded video frame and selects frames whose starting timestamps lie in `[in,out)`. Import resolves milliseconds using actual timestamps, never nominal FPS. Audio-only files, stills, empty frame selections and out-of-bounds intervals are rejected.
+- `list` and `show` need no project or media probing. Repeated `--tag` filters require all tags; source, motion and case-insensitive `--query` filters combine with AND. Edit the JSON to update or remove records, preserving stable IDs. `validate --json` checks files and bounds and reports errors per record.
+
+Example (replace the source paths and bounds with verified footage):
+
+```sh
+uv run vw catalogue /media/library/clips.json init
+uv run vw catalogue /media/library/clips.json add sweep take-01.mp4 25 50 \
+  --time-unit frames --tag dance --motion left --action "Arm sweep" \
+  --camera-movement locked --framing medium \
+  --entry "Centered, arm down" --exit "Left edge, arm raised"
+uv run vw catalogue /media/library/clips.json list --tag dance --motion left --json
+uv run vw catalogue /media/library/clips.json show sweep --json
+uv run vw catalogue /media/library/clips.json validate --json
+uv run vw catalogue /media/library/clips.json preview sweep
+uv run vw --project /path/to/edit catalogue /media/library/clips.json import sweep \
+  --at-frame 842 --json
+uv run vw --project /path/to/edit timeline validate --json
+uv run vw --project /path/to/edit timeline visualize
+uv run vw --project /path/to/edit render --preview
+uv run vw --project /path/to/edit inspect output/preview.mp4 --preview --json
+uv run vw --project /path/to/edit render --final
+```
+
+- Inspect the generated entry/exit JPEG before selecting a clip. The exit preview is the last included frame, never the exclusive out frame. `preview` with no IDs shows all records, up to 200. Content-addressed JPEGs and decoded frame indexes are cached beside the manifest in `cache/catalogue/` and `cache/frame-index/`. First indexing can be slow; later previews reuse caches, and source replacement invalidates them.
+- Import selects IDs in command order and appends frame-addressed rows starting at the required output `--at-frame`. Each row has exact source-frame trims and an explicit `nframes` derived from decoded duration and rational project FPS. Existing rows, gaps and custom CSV columns are preserved. Select placement deliberately: import does not move existing shots or resolve overlaps; validate the timeline before rendering.
+- Registered sources at the same resolved path reuse their asset IDs. New external sources become absolute `source_mode=reference` asset rows; no copy or media re-encoding occurs. The source files must remain available and immutable. Imported edits do not need the catalogue manifest at render time; timeline `catalogue_id` and `catalogue_manifest` columns only record provenance. For portable, self-contained edits, copy or ingest sources into the project before cataloguing them.
+- Python callers use `vw.catalogue` functions directly; `import_clips(manifest, ids, project, at_frame=...)` shares the CLI implementation. Validate catalogue data and the resulting timeline separately.
 
 
 ## Frame timing — do not improvise
@@ -52,6 +86,6 @@ These notes supplement the repository's `AGENTS.md` (which covers development) a
 2. **Why might a 240p insert display inset instead of filled?** README `max_upscale` and PR #11: capped `cover` permits transparent padding; inspect per-shot placement in validation JSON.
 3. **Can markers drive animations?** README marker and keyframe sections and PR #12: manual named marker IDs, absolute marker references, project-frame offsets, exact rounding.
 4. **Why is a late cut slow only the first time?** README cache diagnostics and PR #13: lazy checksum index and verification before bounded seeking.
-5. **Why did an external media symlink fail?** `Project.path` in `src/vw/project.py` resolves paths and requires them to remain below root; copy or ingest external media instead. Only hardlink from a demonstrably stable, immutable location.
+5. **Why did an external media symlink fail?** `Project.path` resolves ordinary paths and requires them to remain below root; copy or ingest external media, or use a catalogue import to register an explicit `source_mode=reference` asset. External symlinks do not opt into reference mode. Only hardlink from a demonstrably stable, immutable location.
 
 Potential documentation improvement: put a minimal end-to-end example combining `at_frame`, `nframes`, `max_upscale`, a named marker and a local animation in a copyable project directory. When testing capped scaling, assert the computed presentation rectangle rather than assuming every `cover` shot fills the canvas.

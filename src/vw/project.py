@@ -19,6 +19,7 @@ class WorkbenchError(Exception):
 ASSET_FIELDS = [
     "asset",
     "path",
+    "source_mode",
     "description",
     "provenance",
     "sha256",
@@ -252,13 +253,25 @@ class Project:
                 )
             if not row["asset"] or row["asset"] in result:
                 raise WorkbenchError("assets.csv: empty or duplicate asset ID")
-            self.path(row["path"])
+            self.asset_path(row)
             result[row["asset"]] = row
         return result
 
+    def asset_path(self, row: dict[str, str]) -> Path:
+        """External access is opt-in per asset, never for arbitrary project paths."""
+        mode = row.get("source_mode", "")
+        if mode == "reference":
+            path = Path(row["path"])
+            if not path.is_absolute():
+                raise WorkbenchError("Referenced asset path must be absolute")
+            return path.resolve()
+        if mode:
+            raise WorkbenchError(f"Unknown asset source_mode: {mode}")
+        return self.path(row["path"])
+
     def media(self, value: str) -> Path:
         assets = self.assets()
-        path = self.path(assets[value]["path"] if value in assets else value)
+        path = self.asset_path(assets[value]) if value in assets else self.path(value)
         if not path.is_file():
             raise WorkbenchError(f"Missing media: {path}")
         return path

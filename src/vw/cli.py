@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from . import assets, audio, contact, inspect, render, timeline
+from . import assets, audio, catalogue, contact, inspect, render, timeline
 from .project import Project, WorkbenchError, initialize
 
 
@@ -75,7 +75,75 @@ def parser() -> argparse.ArgumentParser:
         help="expect preview dimensions for files without manifests",
     )
     inspection.add_argument("--no-contact-sheet", action="store_true")
+    library = commands.add_parser("catalogue", help="manage a reusable clip library")
+    library.add_argument("manifest", help="standalone JSON catalogue path")
+    actions = library.add_subparsers(dest="catalogue_action", required=True)
+    actions.add_parser("init", help="create an empty catalogue")
+    register = actions.add_parser("add", help="register a source excerpt")
+    register.add_argument("id")
+    register.add_argument("source", help="absolute or manifest-relative media path")
+    register.add_argument("start", type=int)
+    register.add_argument("end", type=int, help="exclusive out point")
+    register.add_argument("--time-unit", choices=("ms", "frames"), required=True)
+    register.add_argument("--tag", action="append", default=[])
+    register.add_argument("--motion", choices=catalogue.MOTIONS, default="")
+    for field in catalogue.TEXT_FIELDS:
+        register.add_argument("--" + field.replace("_", "-"), default="")
+    listing = actions.add_parser("list", help="filter catalogue records")
+    listing.add_argument("--source")
+    listing.add_argument("--tag", action="append", default=[])
+    listing.add_argument("--motion", choices=catalogue.MOTIONS)
+    listing.add_argument("--query")
+    show = actions.add_parser("show", help="show records in selection order")
+    show.add_argument("ids", nargs="+")
+    actions.add_parser("validate", help="check records, source files and trim bounds")
+    preview = actions.add_parser("preview", help="entry/exit contact sheet")
+    preview.add_argument(
+        "ids", nargs="*", help="IDs; omitted means all clips (max 200)"
+    )
+    importing = actions.add_parser("import", help="append selected clips to a project")
+    importing.add_argument("ids", nargs="+")
+    importing.add_argument("--at-frame", type=int, required=True)
     return root
+
+
+def catalogue_command(args) -> dict:
+    match args.catalogue_action:
+        case "init":
+            return catalogue.initialize(args.manifest)
+        case "add":
+            clip = {
+                "id": args.id,
+                "source": args.source,
+                "in": args.start,
+                "out": args.end,
+                "time_unit": args.time_unit,
+                "tags": args.tag,
+                "motion": args.motion,
+            } | {field: getattr(args, field) for field in catalogue.TEXT_FIELDS}
+            return catalogue.add(args.manifest, clip)
+        case "list":
+            return catalogue.search(
+                args.manifest,
+                source=args.source,
+                tags=args.tag,
+                motion=args.motion,
+                query=args.query,
+            )
+        case "show":
+            return {"clips": catalogue.select(args.manifest, args.ids)}
+        case "validate":
+            return catalogue.validate(args.manifest)
+        case "preview":
+            return catalogue.preview(args.manifest, args.ids)
+        case "import":
+            return catalogue.import_clips(
+                args.manifest,
+                args.ids,
+                Project.load(args.project),
+                at_frame=args.at_frame,
+            )
+    raise WorkbenchError("Unknown catalogue command")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -90,6 +158,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if args.command == "init":
             result = initialize(args.directory)
+        elif args.command == "catalogue":
+            result = catalogue_command(args)
         else:
             project = Project.load(args.project)
             match args.command:
