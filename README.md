@@ -634,6 +634,16 @@ reference hashing, seek verification/fallback reasons, normalization hits, and
 FFmpeg wall time/decoded-frame counts. Python callers can instead attach an INFO
 handler to `logging.getLogger("vw.performance")`. Decoded-frame counts come from
 FFmpeg's debug summary; a missing counter is reported as `null`, never estimated.
+The `frame_hash_timing` event reports the selected source stream, index and hash
+time bases, hashed frame count, and timestamp range. Timestamp mismatch reasons
+include both frame counts and the first differing frame's zero-based index and
+timestamps (in index ticks). A missing timestamp at that position indicates a
+frame-count mismatch.
+The hash time base is reported as declared by FFmpeg, or `null` when absent;
+collecting these diagnostics does not change verification or cache validity.
+Existing cached failures retain their original diagnostic text. To collect fresh
+diagnostics for a previously failed source, remove its frame-index cache entry
+or clear `cache/frame-index/` before retrying an uncached shot.
 
 Reproduce the performance matrix in a new directory:
 

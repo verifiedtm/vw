@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
+from itertools import zip_longest
 from pathlib import Path
 
 from . import metrics
@@ -80,8 +81,19 @@ class FrameIndex:
             try:
                 rows = self.decode_hashes([])
                 if [row[0] for row in rows] != self.stamps[:-1]:
+                    frame, expected, actual = next(
+                        (frame, expected, actual)
+                        for frame, (expected, actual) in enumerate(
+                            zip_longest(self.stamps[:-1], (row[0] for row in rows))
+                        )
+                        if expected != actual
+                    )
                     raise WorkbenchError(
-                        "hash decoder timestamps differ from frame index"
+                        "hash decoder timestamps differ from frame index: "
+                        f"stream={self.stream['index']}, time_base={self.tick}, "
+                        f"indexed_frames={len(self.stamps) - 1}, "
+                        f"decoded_frames={len(rows)}, first_difference_frame={frame}, "
+                        f"indexed_pts={expected}, decoded_pts={actual}"
                     )
                 self.hashes = rows
             except WorkbenchError as exc:
@@ -133,13 +145,28 @@ class FrameIndex:
         )
         try:
             rows = []
+            hash_tick = None
             for line in output.splitlines():
+                if line.startswith("#tb 0:"):
+                    hash_tick = line.split(":", 1)[1].strip()
                 if not line or line.startswith("#"):
                     continue
                 fields = [field.strip() for field in line.split(",")]
                 if len(fields) != 6 or not re.fullmatch(r"[0-9a-f]{64}", fields[5]):
                     raise ValueError("invalid frame hash")
                 rows.append([int(fields[2]), int(fields[4]), fields[5]])
+            metrics.emit(
+                "frame_hash_timing",
+                source=str(self.path),
+                stream=self.stream["index"],
+                source_start_pts=self.stream.get("start_pts"),
+                mode="seek" if inputs else "reference",
+                index_time_base=str(self.tick),
+                hash_time_base=hash_tick,
+                hashed_frames=len(rows),
+                first_pts=rows[0][0] if rows else None,
+                last_pts=rows[-1][0] if rows else None,
+            )
             return rows
         except (ValueError, IndexError) as exc:
             raise WorkbenchError(f"Cannot verify decoded frames: {exc}") from exc
